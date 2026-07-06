@@ -1,0 +1,74 @@
+{
+  "generated_site": "site/index.html",
+  "scope_warning": "Synthetic lab only. No production logs, credentials, tenants, tokens, malware, offensive simulations or host-changing actions.",
+  "end_to_end_walkthrough": [
+    {
+      "step": 1,
+      "lab": "windows-authentication-detection-lab",
+      "scenario": "AUTH-003-POS",
+      "title": "Windows authentication sequence",
+      "description": "Review repeated Windows logon failures followed by a success."
+    },
+    {
+      "step": 2,
+      "lab": "microsoft-entra-detection-lab",
+      "scenario": "ENTRA-003-POS",
+      "title": "Cloud identity authentication sequence",
+      "description": "Review repeated MFA denials followed by a successful sign-in."
+    },
+    {
+      "step": 3,
+      "lab": "microsoft-sentinel-kql-detection-lab",
+      "scenario": "SENT-006-POS",
+      "title": "Cross-source Sentinel incident",
+      "description": "Correlate Entra and Windows signals into one synthetic incident."
+    }
+  ],
+  "labs": [
+    {
+      "slug": "windows-authentication-detection-lab",
+      "name": "Windows Authentication Detection Lab",
+      "short_name": "Windows Auth Lab",
+      "layer": "Endpoint authentication",
+      "summary": "Sigma-style Windows authentication detections over synthetic Security Event scenarios.",
+      "repo_url": "https://github.com/rubenasuasoto/windows-authentication-detection-lab",
+      "demo_url": "https://rubenasuasoto.github.io/windows-authentication-detection-lab/reports/latest/demo.html",
+      "docs_url": "https://2dam-7.gitbook.io/window-auth/",
+      "primary_walkthrough": "AUTH-003-POS",
+      "detections": ["AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "AUTH-005"],
+      "local_path": "../windows-authentication-detection-lab",
+      "local_validate_command": "uv run authlab all",
+      "local_demo_command": "uv run authlab demo"
+    },
+    {
+      "slug": "microsoft-entra-detection-lab",
+      "name": "Microsoft Entra Detection Lab",
+      "short_name": "Entra Lab",
+      "layer": "Cloud identity",
+      "summary": "Defensive Microsoft Entra sign-in and audit detections using only synthetic events.",
+      "repo_url": "https://github.com/rubenasuasoto/microsoft-entra-detection-lab",
+      "demo_url": "https://rubenasuasoto.github.io/microsoft-entra-detection-lab/reports/latest/demo.html",
+      "docs_url": "https://2dam-7.gitbook.io/window-entra/",
+      "primary_walkthrough": "ENTRA-003-POS",
+      "detections": ["ENTRA-001", "ENTRA-002", "ENTRA-003", "ENTRA-004", "ENTRA-005", "ENTRA-006"],
+      "local_path": "../microsoft-entra-detection-lab",
+      "local_validate_command": "uv run entralab all",
+      "local_demo_command": "uv run entralab demo"
+    },
+    {
+      "slug": "microsoft-sentinel-kql-detection-lab",
+      "name": "Microsoft Sentinel KQL Detection Lab",
+      "short_name": "Sentinel KQL Lab",
+      "layer": "SIEM correlation",
+      "summary": "Sentinel-style KQL analytics correlating synthetic SigninLogs, AuditLogs and SecurityEvent rows.",
+      "repo_url": "https://github.com/rubenasuasoto/microsoft-sentinel-kql-detection-lab",
+      "demo_url": "https://rubenasuasoto.github.io/microsoft-sentinel-kql-detection-lab/reports/latest/demo.html",
+      "docs_url": "https://2dam-7.gitbook.io/window-sentinel/",
+      "primary_walkthrough": "SENT-006-POS",
+      "detections": ["SENT-001", "SENT-002", "SENT-003", "SENT-004", "SENT-005", "SENT-006"],
+      "local_path": "../microsoft-sentinel-kql-detection-lab",
+      "local_validate_command": "uv run sentinellab all",
+      "local_demo_command": "uv run sentinellab demo"
+    }
+  ]
+}
