@@ -21,6 +21,7 @@ def verify_urls(config: HubConfig | None = None, timeout: float = 12.0) -> list[
     checks: list[UrlCheck] = [_check_url("Hub docs", cfg.hub_docs_url, timeout)]
     for lab in cfg.labs:
         checks.append(_check_url(f"{lab.short_name} repo", lab.repo_url, timeout))
+        checks.append(_check_url(f"{lab.short_name} release", lab.release_url, timeout))
         checks.append(_check_url(f"{lab.short_name} demo", lab.demo_url, timeout))
         checks.append(_check_url(f"{lab.short_name} docs", lab.docs_url, timeout))
     return checks

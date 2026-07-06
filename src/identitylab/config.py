@@ -16,6 +16,7 @@ class Lab:
     layer: str
     summary: str
     repo_url: str
+    release_url: str
     demo_url: str
     docs_url: str
     primary_walkthrough: str

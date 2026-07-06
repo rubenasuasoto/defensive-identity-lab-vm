@@ -22,6 +22,7 @@ uv run pip-audit --skip-editable
 - Public GitBook returns `200`: `https://2dam-7.gitbook.io/defensive-lab/`.
 - The hub links to the three public demos.
 - The three GitBook URLs return `200`.
+- The three lab release URLs return `200`.
 
 ## Release
 

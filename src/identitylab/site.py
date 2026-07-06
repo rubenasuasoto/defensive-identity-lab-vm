@@ -90,7 +90,7 @@ def render_site(config: HubConfig) -> str:
     }}
     .metrics {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 22px;
     }}
@@ -247,6 +247,7 @@ def _render_lab_card(lab: object) -> str:
       <div class="links">
         <a href="{escape(lab.demo_url)}">Demo</a>
         <a href="{escape(lab.docs_url)}">GitBook</a>
+        <a href="{escape(lab.release_url)}">Release</a>
         <a href="{escape(lab.repo_url)}">Repo</a>
       </div>
     </article>

@@ -14,7 +14,7 @@ The hub does not duplicate those projects. It links their public demos, GitBook 
 
 ## Public Hub
 
-Expected GitHub Pages URL:
+GitHub Pages:
 
 <https://rubenasuasoto.github.io/defensive-identity-lab-vm/>
 
@@ -24,11 +24,11 @@ Public GitBook documentation:
 
 ## Connected Labs
 
-| Lab | Layer | Public demo | Docs |
-|---|---|---|---|
-| Windows Authentication Detection Lab | Endpoint authentication | <https://rubenasuasoto.github.io/windows-authentication-detection-lab/reports/latest/demo.html> | <https://2dam-7.gitbook.io/window-auth/> |
-| Microsoft Entra Detection Lab | Cloud identity | <https://rubenasuasoto.github.io/microsoft-entra-detection-lab/reports/latest/demo.html> | <https://2dam-7.gitbook.io/window-entra/> |
-| Microsoft Sentinel KQL Detection Lab | SIEM correlation | <https://rubenasuasoto.github.io/microsoft-sentinel-kql-detection-lab/reports/latest/demo.html> | <https://2dam-7.gitbook.io/window-sentinel/> |
+| Lab | Layer | Public demo | Docs | Release |
+|---|---|---|---|---|
+| Windows Authentication Detection Lab | Endpoint authentication | <https://rubenasuasoto.github.io/windows-authentication-detection-lab/reports/latest/demo.html> | <https://2dam-7.gitbook.io/window-auth/> | <https://github.com/rubenasuasoto/windows-authentication-detection-lab/releases/tag/v0.1.0> |
+| Microsoft Entra Detection Lab | Cloud identity | <https://rubenasuasoto.github.io/microsoft-entra-detection-lab/reports/latest/demo.html> | <https://2dam-7.gitbook.io/window-entra/> | <https://github.com/rubenasuasoto/microsoft-entra-detection-lab/releases/tag/v0.1.0> |
+| Microsoft Sentinel KQL Detection Lab | SIEM correlation | <https://rubenasuasoto.github.io/microsoft-sentinel-kql-detection-lab/reports/latest/demo.html> | <https://2dam-7.gitbook.io/window-sentinel/> | <https://github.com/rubenasuasoto/microsoft-sentinel-kql-detection-lab/releases/tag/v0.1.0> |
 
 ## Recommended Walkthrough
 

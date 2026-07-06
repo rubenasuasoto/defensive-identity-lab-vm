@@ -17,6 +17,8 @@ def test_each_lab_has_required_public_fields() -> None:
     assert config.hub_docs_url == "https://2dam-7.gitbook.io/defensive-lab/"
     for lab in config.labs:
         assert lab.repo_url.startswith("https://github.com/rubenasuasoto/")
+        assert lab.release_url.startswith("https://github.com/rubenasuasoto/")
+        assert lab.release_url.endswith("/releases/tag/v0.1.0")
         assert lab.demo_url.startswith("https://rubenasuasoto.github.io/")
         assert lab.docs_url.startswith("https://2dam-7.gitbook.io/")
         assert lab.primary_walkthrough
