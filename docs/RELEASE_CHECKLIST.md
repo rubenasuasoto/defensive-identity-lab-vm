@@ -19,6 +19,7 @@ uv run pip-audit --skip-editable
 - `Validate hub` is green.
 - `Publish hub site` is green.
 - Public hub returns `200`: `https://rubenasuasoto.github.io/defensive-identity-lab-vm/`.
+- Public GitBook returns `200`: `https://2dam-7.gitbook.io/defensive-lab/`.
 - The hub links to the three public demos.
 - The three GitBook URLs return `200`.
 

@@ -193,6 +193,7 @@ def render_site(config: HubConfig) -> str:
         A public entry point for Windows authentication, Microsoft Entra ID
         and Microsoft Sentinel KQL detection labs.
       </p>
+      <p><a href="{escape(config.hub_docs_url)}">Open hub documentation</a></p>
     </div>
   </header>
   <main>
@@ -221,6 +222,7 @@ def render_site(config: HubConfig) -> str:
         sibling directories, run each validation command, and keep evidence
         under each lab's <code>reports/latest</code> directory.
       </p>
+      <p><a href="{escape(config.hub_docs_url)}">Read the public VM guide</a></p>
     </section>
   </main>
   <footer>

@@ -1,5 +1,6 @@
 {
   "generated_site": "site/index.html",
+  "hub_docs_url": "https://2dam-7.gitbook.io/defensive-lab/",
   "scope_warning": "Synthetic lab only. No production logs, credentials, tenants, tokens, malware, offensive simulations or host-changing actions.",
   "end_to_end_walkthrough": [
     {

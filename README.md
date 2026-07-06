@@ -18,6 +18,10 @@ Expected GitHub Pages URL:
 
 <https://rubenasuasoto.github.io/defensive-identity-lab-vm/>
 
+Public GitBook documentation:
+
+<https://2dam-7.gitbook.io/defensive-lab/>
+
 ## Connected Labs
 
 | Lab | Layer | Public demo | Docs |

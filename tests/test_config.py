@@ -14,6 +14,7 @@ def test_labs_json_contains_expected_labs() -> None:
 def test_each_lab_has_required_public_fields() -> None:
     config = load_config()
 
+    assert config.hub_docs_url == "https://2dam-7.gitbook.io/defensive-lab/"
     for lab in config.labs:
         assert lab.repo_url.startswith("https://github.com/rubenasuasoto/")
         assert lab.demo_url.startswith("https://rubenasuasoto.github.io/")

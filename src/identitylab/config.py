@@ -28,6 +28,7 @@ class Lab:
 @dataclass(frozen=True)
 class HubConfig:
     generated_site: str
+    hub_docs_url: str
     scope_warning: str
     end_to_end_walkthrough: list[dict[str, Any]]
     labs: list[Lab]
@@ -38,6 +39,7 @@ def load_config(path: Path = LABS_CONFIG) -> HubConfig:
     labs = [Lab(**lab) for lab in data["labs"]]
     return HubConfig(
         generated_site=data["generated_site"],
+        hub_docs_url=data["hub_docs_url"],
         scope_warning=data["scope_warning"],
         end_to_end_walkthrough=data["end_to_end_walkthrough"],
         labs=labs,

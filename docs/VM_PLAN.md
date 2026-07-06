@@ -12,7 +12,7 @@ Required evidence:
 
 - `identitylab all` output.
 - Screenshot or saved copy of `site/index.html`.
-- Public URL verification for the three lab demos and GitBook spaces.
+- Public URL verification for the hub GitBook, the three lab demos and the three lab GitBook spaces.
 
 ## VM-B: Local clone workspace
 
