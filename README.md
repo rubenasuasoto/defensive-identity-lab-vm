@@ -45,6 +45,7 @@ uv sync --extra dev --locked
 uv run identitylab build-site
 uv run identitylab verify
 uv run identitylab all
+uv run identitylab vm-check
 ```
 
 Open:
@@ -58,3 +59,14 @@ site/index.html
 This repo is the coordination layer for a future local VM. The first version is intentionally static and safe: it provides a landing page, a verification command and documentation for cloning the three labs as sibling directories.
 
 See [`docs/VM_PLAN.md`](docs/VM_PLAN.md) for the phased VM plan and evidence checklist.
+See [`docs/PORTABLE_SETUP.md`](docs/PORTABLE_SETUP.md) for setup on another computer.
+
+Local VM helper commands:
+
+```powershell
+.\scripts\bootstrap-sibling-labs.ps1
+.\scripts\vm-readiness.ps1
+.\scripts\run-all-labs.ps1
+.\scripts\vm-evidence.ps1
+.\scripts\start-local-hub.ps1
+```

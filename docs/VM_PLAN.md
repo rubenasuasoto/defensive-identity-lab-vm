@@ -11,6 +11,7 @@ Goal: provide a local landing page and offline-friendly review flow.
 Required evidence:
 
 - `identitylab all` output.
+- `identitylab vm-check` output.
 - Screenshot or saved copy of `site/index.html`.
 - Public URL verification for the hub GitBook, the three lab demos and the three lab GitBook spaces.
 
@@ -21,7 +22,7 @@ Goal: clone the three labs as sibling directories and run their validation comma
 Expected layout:
 
 ```text
-Desktop/
+<workspace>/
   defensive-identity-lab-vm/
   windows-authentication-detection-lab/
   microsoft-entra-detection-lab/
@@ -47,8 +48,19 @@ uv run sentinellab demo
 Required evidence:
 
 - `reports/latest` from each lab.
+- `evidence/latest/identity-lab-vm-readiness.md` from this hub.
 - CLI output showing all synthetic cases pass.
 - A short note confirming no real logs, tenants, credentials or tokens were used.
+
+Helper commands:
+
+```powershell
+.\scripts\bootstrap-sibling-labs.ps1
+.\scripts\vm-readiness.ps1
+.\scripts\run-all-labs.ps1
+.\scripts\vm-evidence.ps1
+.\scripts\start-local-hub.ps1
+```
 
 ## VM-C: Guided local review
 

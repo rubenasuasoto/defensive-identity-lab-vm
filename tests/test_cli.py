@@ -2,6 +2,7 @@ from pathlib import Path
 
 from identitylab import cli
 from identitylab.verify import UrlCheck
+from identitylab.vm import ReadinessCheck, ReadinessReport
 
 
 def test_build_site_command_prints_output(monkeypatch, capsys) -> None:
@@ -49,3 +50,18 @@ def test_all_command_builds_and_verifies(monkeypatch) -> None:
 
     assert cli.main(["all"]) == 0
     assert calls == ["build", "verify"]
+
+
+def test_vm_check_command_reports_readiness(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "build_readiness_report",
+        lambda: ReadinessReport(
+            generated_at="2026-07-06T00:00:00+00:00",
+            host={"system": "Windows"},
+            checks=[ReadinessCheck("Python", "pass", "Python 3.12")],
+        ),
+    )
+
+    assert cli.main(["vm-check"]) == 0
+    assert "Identity lab VM readiness" in capsys.readouterr().out
