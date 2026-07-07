@@ -12,15 +12,21 @@ from identitylab.live import (
     incident_queue,
     live_state,
     render_live_app,
+    request_training_hint,
     reset_run,
     reset_runtime,
     scenario_index,
     scenario_to_dict,
     start_case_run,
+    start_training_run,
     tick_case_run,
     tick_run,
+    training_evidence_markdown,
+    training_index,
+    training_run_detail,
     update_case_task,
     update_incident_action,
+    update_training_checkpoint,
 )
 
 
@@ -54,10 +60,16 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "rule evaluation" in html
     assert "reset runtime state" in html
     assert "case run" in html
+    assert "training mode" in html
+    assert "learning objectives" in html
+    assert "guided steps" in html
+    assert "hint" in html
+    assert "feedback" in html
     assert "analyst tasks" in html
     assert "close case" in html
     assert "fetch('/api/scenarios')" in html
     assert "fetch('/api/cases')" in html
+    assert "fetch('/api/training')" in html
     assert "/api/state?scenario=" in html
     assert "<script src" not in html
     assert "<form" not in html
@@ -231,3 +243,60 @@ def test_reset_runtime_clears_case_runs(tmp_path: Path) -> None:
     reset_runtime(db_path)
 
     assert case_index(db_path)["runs"] == []
+
+
+def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
+    db_path = tmp_path / "live.sqlite"
+
+    index = training_index(db_path)
+    assert index["modules"][0]["module_id"] == "TRAIN-001"
+
+    state = start_training_run("TRAIN-001", db_path)
+    training_run_id = int(state["run"]["id"])
+    case_run_id = int(state["case_run"]["run"]["id"])
+
+    assert state["module"]["case_id"] == "CASE-001"
+    assert state["run"]["status"] == "In progress"
+    assert len(state["checkpoints"]) == 5
+    assert state["feedback"].startswith("Keep investigating")
+
+    state = update_training_checkpoint(
+        training_run_id,
+        "find-signal",
+        True,
+        db_path,
+    )
+    assert any(
+        checkpoint["checkpoint_id"] == "find-signal" and checkpoint["completed"]
+        for checkpoint in state["checkpoints"]
+    )
+
+    state = request_training_hint(training_run_id, db_path)
+    assert state["latest_hint"]
+    assert len(state["hints"]) == 1
+
+    for _ in range(8):
+        tick_case_run(case_run_id, db_path)
+    close_case_run(case_run_id, "Suspicious", "Correlated identity activity.", db_path)
+
+    state = training_run_detail(training_run_id, db_path)
+    assert state["run"]["status"] == "Completed"
+    assert "Good call" in state["feedback"]
+
+    markdown = training_evidence_markdown(training_run_id, db_path)
+    assert "Training evidence: TRAIN-001" in markdown
+    assert "Learning objectives" in markdown
+    assert "Correlated identity activity" in markdown or "Good call" in markdown
+
+
+def test_training_feedback_corrects_benign_close(tmp_path: Path) -> None:
+    db_path = tmp_path / "live.sqlite"
+    state = start_training_run("TRAIN-001", db_path)
+    training_run_id = int(state["run"]["id"])
+    case_run_id = int(state["case_run"]["run"]["id"])
+
+    close_case_run(case_run_id, "Benign", "Looks normal.", db_path)
+    state = training_run_detail(training_run_id, db_path)
+
+    assert state["run"]["status"] == "Completed"
+    assert "Review needed" in state["feedback"]

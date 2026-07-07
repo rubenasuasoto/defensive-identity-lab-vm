@@ -48,6 +48,19 @@ class SocCase:
     tasks: list[dict[str, str]]
 
 
+@dataclass(frozen=True)
+class TrainingModule:
+    module_id: str
+    title: str
+    audience: str
+    case_id: str
+    summary: str
+    objectives: list[str]
+    guided_steps: list[dict[str, str]]
+    hints: list[str]
+    expected_decisions: list[str]
+
+
 SCENARIOS: list[LiveScenario] = [
     LiveScenario(
         scenario_id="SENT-006-POS",
@@ -343,6 +356,63 @@ SOC_CASES: list[SocCase] = [
 ]
 
 
+TRAINING_MODULES: list[TrainingModule] = [
+    TrainingModule(
+        module_id="TRAIN-001",
+        title="Investigating a cross-source identity incident",
+        audience="Beginner SOC analysts",
+        case_id="CASE-001",
+        summary=(
+            "Guided lesson for separating benign identity noise from a correlated "
+            "Entra and Windows authentication incident."
+        ),
+        objectives=[
+            "Identify benign noise before escalating an alert.",
+            "Correlate account, IP and host across Entra and Windows events.",
+            "Use entities and rule evaluation to explain why the incident alerted.",
+            "Write an analyst note and close the case with a defensible decision.",
+        ],
+        guided_steps=[
+            {
+                "step_id": "observe-noise",
+                "label": "Identify at least one benign event in the timeline.",
+            },
+            {
+                "step_id": "find-signal",
+                "label": "Find the account and IP shared by the alertable events.",
+            },
+            {
+                "step_id": "review-rule",
+                "label": "Explain why the rule evaluation changes to Alert.",
+            },
+            {
+                "step_id": "complete-tasks",
+                "label": "Complete the analyst task checklist.",
+            },
+            {
+                "step_id": "close-case",
+                "label": "Close the case as Suspicious or Escalated with a note.",
+            },
+        ],
+        hints=[
+            (
+                "Start by comparing classification values: benign events add context, "
+                "signal events drive the alert."
+            ),
+            (
+                "The strongest correlation uses the same account key and source IP "
+                "across SigninLogs and SecurityEvent."
+            ),
+            (
+                "A good closing note should mention cloud risk, repeated endpoint "
+                "failures and the later success."
+            ),
+        ],
+        expected_decisions=["Suspicious", "Escalated"],
+    )
+]
+
+
 def scenario_index() -> list[dict[str, str]]:
     return [
         {
@@ -391,6 +461,41 @@ def get_case(case_id: str) -> SocCase | None:
     return next((case for case in SOC_CASES if case.case_id == case_id), None)
 
 
+def training_index(db_path: Path = LIVE_DB) -> dict[str, object]:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, module_id, case_run_id, status, feedback, started_at, completed_at
+            FROM training_runs
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return {
+        "modules": [training_to_dict(module) for module in TRAINING_MODULES],
+        "runs": [
+            {
+                "id": row[0],
+                "module_id": row[1],
+                "case_run_id": row[2],
+                "status": row[3],
+                "feedback": row[4],
+                "started_at": row[5],
+                "completed_at": row[6],
+            }
+            for row in rows
+        ],
+        "scope_warning": SCOPE_WARNING,
+    }
+
+
+def get_training_module(module_id: str) -> TrainingModule | None:
+    return next(
+        (module for module in TRAINING_MODULES if module.module_id == module_id),
+        None,
+    )
+
+
 def case_to_dict(case: SocCase) -> dict[str, object]:
     return {
         "case_id": case.case_id,
@@ -400,6 +505,21 @@ def case_to_dict(case: SocCase) -> dict[str, object]:
         "severity": case.severity,
         "event_total": len(case.events),
         "tasks": case.tasks,
+        "scope_warning": SCOPE_WARNING,
+    }
+
+
+def training_to_dict(module: TrainingModule) -> dict[str, object]:
+    return {
+        "module_id": module.module_id,
+        "title": module.title,
+        "audience": module.audience,
+        "case_id": module.case_id,
+        "summary": module.summary,
+        "objectives": module.objectives,
+        "guided_steps": module.guided_steps,
+        "hints": module.hints,
+        "expected_decisions": module.expected_decisions,
         "scope_warning": SCOPE_WARNING,
     }
 
@@ -493,6 +613,43 @@ def init_store(db_path: Path = LIVE_DB) -> None:
                 completed INTEGER NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(case_run_id, task_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS training_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                module_id TEXT NOT NULL,
+                case_run_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                feedback TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS training_checkpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                training_run_id INTEGER NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                label TEXT NOT NULL,
+                completed INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(training_run_id, checkpoint_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS training_hints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                training_run_id INTEGER NOT NULL,
+                hint_index INTEGER NOT NULL,
+                hint TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
             """
         )
@@ -740,7 +897,19 @@ def reset_runtime(db_path: Path = LIVE_DB) -> dict[str, object]:
             "run_state": connection.execute("SELECT COUNT(*) FROM run_state").fetchone()[0],
             "case_runs": connection.execute("SELECT COUNT(*) FROM case_runs").fetchone()[0],
             "case_tasks": connection.execute("SELECT COUNT(*) FROM case_tasks").fetchone()[0],
+            "training_runs": connection.execute(
+                "SELECT COUNT(*) FROM training_runs"
+            ).fetchone()[0],
+            "training_checkpoints": connection.execute(
+                "SELECT COUNT(*) FROM training_checkpoints"
+            ).fetchone()[0],
+            "training_hints": connection.execute(
+                "SELECT COUNT(*) FROM training_hints"
+            ).fetchone()[0],
         }
+        connection.execute("DELETE FROM training_hints")
+        connection.execute("DELETE FROM training_checkpoints")
+        connection.execute("DELETE FROM training_runs")
         connection.execute("DELETE FROM case_tasks")
         connection.execute("DELETE FROM case_runs")
         connection.execute("DELETE FROM analyst_notes")
@@ -904,7 +1073,146 @@ def close_case_run(
     if incident:
         update_incident_action(int(incident["id"]), clean_decision, note, db_path)
         detail = case_run_detail(case_run_id, db_path)
+    _complete_training_for_case(case_run_id, db_path)
     return detail
+
+
+def start_training_run(
+    module_id: str = "TRAIN-001",
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    module = _require_training_module(module_id)
+    case_detail = start_case_run(module.case_id, db_path)
+    now = _now()
+    with sqlite3.connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO training_runs (
+              module_id, case_run_id, status, feedback, started_at, completed_at
+            )
+            VALUES (?, ?, 'In progress', '', ?, '')
+            """,
+            (module.module_id, case_detail["run"]["id"], now),
+        )
+        training_run_id = int(cursor.lastrowid)
+        for step in module.guided_steps:
+            connection.execute(
+                """
+                INSERT INTO training_checkpoints (
+                  training_run_id, checkpoint_id, label, completed, updated_at
+                )
+                VALUES (?, ?, ?, 0, ?)
+                """,
+                (training_run_id, step["step_id"], step["label"], now),
+            )
+    return training_run_detail(training_run_id, db_path)
+
+
+def training_run_detail(
+    training_run_id: int,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    row = _load_training_run(training_run_id, db_path)
+    if row is None:
+        raise ValueError(f"Unknown training run: {training_run_id}")
+    module = _require_training_module(str(row["module_id"]))
+    case_detail = case_run_detail(int(row["case_run_id"]), db_path)
+    return {
+        "run": row,
+        "module": training_to_dict(module),
+        "case_run": case_detail,
+        "checkpoints": _load_training_checkpoints(training_run_id, db_path),
+        "hints": _load_training_hints(training_run_id, db_path),
+        "feedback": _training_feedback(row, case_detail, module),
+        "scope_warning": SCOPE_WARNING,
+    }
+
+
+def update_training_checkpoint(
+    training_run_id: int,
+    checkpoint_id: str,
+    completed: bool,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE training_checkpoints
+            SET completed = ?, updated_at = ?
+            WHERE training_run_id = ? AND checkpoint_id = ?
+            """,
+            (1 if completed else 0, _now(), training_run_id, checkpoint_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Unknown training checkpoint: {checkpoint_id}")
+    return training_run_detail(training_run_id, db_path)
+
+
+def request_training_hint(
+    training_run_id: int,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    row = _load_training_run(training_run_id, db_path)
+    if row is None:
+        raise ValueError(f"Unknown training run: {training_run_id}")
+    module = _require_training_module(str(row["module_id"]))
+    previous_hints = _load_training_hints(training_run_id, db_path)
+    hint_index = min(len(previous_hints), len(module.hints) - 1)
+    hint = module.hints[hint_index]
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO training_hints (training_run_id, hint_index, hint, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (training_run_id, hint_index, hint, _now()),
+        )
+    detail = training_run_detail(training_run_id, db_path)
+    detail["latest_hint"] = hint
+    return detail
+
+
+def training_evidence_markdown(
+    training_run_id: int,
+    db_path: Path = LIVE_DB,
+) -> str:
+    detail = training_run_detail(training_run_id, db_path)
+    module = detail["module"]
+    run = detail["run"]
+    case_detail = detail["case_run"]
+    lines = [
+        f"# Training evidence: {module['module_id']} run {run['id']}",
+        "",
+        f"- Title: {module['title']}",
+        f"- Audience: {module['audience']}",
+        f"- Status: {run['status']}",
+        f"- Feedback: {detail['feedback']}",
+        "",
+        "## Learning objectives",
+        "",
+    ]
+    for objective in module["objectives"]:
+        lines.append(f"- {objective}")
+    lines.extend(["", "## Guided steps", ""])
+    for checkpoint in detail["checkpoints"]:
+        status = "done" if checkpoint["completed"] else "open"
+        lines.append(f"- [{status}] {checkpoint['label']}")
+    lines.extend(["", "## Hints used", ""])
+    if detail["hints"]:
+        for hint in detail["hints"]:
+            lines.append(f"- {hint['hint']}")
+    else:
+        lines.append("- None")
+    lines.extend(["", "## Case summary", ""])
+    lines.append(f"- Case: {case_detail['case']['case_id']}")
+    lines.append(f"- Events: {case_detail['event_count']}")
+    lines.append(f"- Decision: {case_detail['run']['decision'] or '-'}")
+    if case_detail["incident"]:
+        lines.append(f"- Incident: {case_detail['incident']['detection']}")
+        lines.append(f"- Incident status: {case_detail['incident']['status']}")
+    lines.extend(["", "## Scope", "", SCOPE_WARNING, ""])
+    return "\n".join(lines)
 
 
 def evaluate_case_detection(
@@ -1429,6 +1737,133 @@ def _load_case_tasks(case_run_id: int, db_path: Path) -> list[dict[str, object]]
     ]
 
 
+def _load_training_run(training_run_id: int, db_path: Path) -> dict[str, object] | None:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, module_id, case_run_id, status, feedback, started_at, completed_at
+            FROM training_runs
+            WHERE id = ?
+            """,
+            (training_run_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "module_id": row[1],
+        "case_run_id": row[2],
+        "status": row[3],
+        "feedback": row[4],
+        "started_at": row[5],
+        "completed_at": row[6],
+    }
+
+
+def _load_training_checkpoints(
+    training_run_id: int,
+    db_path: Path,
+) -> list[dict[str, object]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT checkpoint_id, label, completed, updated_at
+            FROM training_checkpoints
+            WHERE training_run_id = ?
+            ORDER BY id
+            """,
+            (training_run_id,),
+        ).fetchall()
+    return [
+        {
+            "checkpoint_id": row[0],
+            "label": row[1],
+            "completed": bool(row[2]),
+            "updated_at": row[3],
+        }
+        for row in rows
+    ]
+
+
+def _load_training_hints(
+    training_run_id: int,
+    db_path: Path,
+) -> list[dict[str, object]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, hint_index, hint, created_at
+            FROM training_hints
+            WHERE training_run_id = ?
+            ORDER BY id
+            """,
+            (training_run_id,),
+        ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "hint_index": row[1],
+            "hint": row[2],
+            "created_at": row[3],
+        }
+        for row in rows
+    ]
+
+
+def _complete_training_for_case(case_run_id: int, db_path: Path) -> None:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id
+            FROM training_runs
+            WHERE case_run_id = ? AND status != 'Completed'
+            """,
+            (case_run_id,),
+        ).fetchall()
+    for row in rows:
+        training_run_id = int(row[0])
+        detail = training_run_detail(training_run_id, db_path)
+        feedback = _training_feedback(detail["run"], detail["case_run"], _require_training_module(
+            str(detail["run"]["module_id"])
+        ))
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                UPDATE training_runs
+                SET status = 'Completed', feedback = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (feedback, _now(), training_run_id),
+            )
+
+
+def _training_feedback(
+    run: dict[str, object],
+    case_detail: dict[str, object],
+    module: TrainingModule,
+) -> str:
+    if run.get("feedback"):
+        return str(run["feedback"])
+    decision = str(case_detail["run"].get("decision") or "")
+    if not decision:
+        return (
+            "Keep investigating: review the timeline, entities and rule evaluation "
+            "before closing."
+        )
+    if decision in module.expected_decisions:
+        return "Good call: the decision matches the correlated identity evidence in this lesson."
+    if decision == "Benign":
+        return (
+            "Review needed: benign noise exists, but the correlated Entra risk and Windows "
+            "success after failures should not be closed as benign."
+        )
+    return (
+        "The case is closed, but compare your decision with the expected suspicious "
+        "or escalated outcome."
+    )
+
+
 def _case_event_counts(events: list[dict[str, object]]) -> dict[str, int]:
     return {
         "total": len(events),
@@ -1452,6 +1887,13 @@ def _require_case(case_id: str) -> SocCase:
     if case is None:
         raise ValueError(f"Unknown case: {case_id}")
     return case
+
+
+def _require_training_module(module_id: str) -> TrainingModule:
+    module = get_training_module(module_id)
+    if module is None:
+        raise ValueError(f"Unknown training module: {module_id}")
+    return module
 
 
 def _now() -> str:
@@ -1647,6 +2089,15 @@ def _render_workbench_app() -> str:
       <button id="export-md">Export MD</button>
     </section>
     <section class="toolbar">
+      <strong>Training Mode</strong>
+      <select id="training-select"></select>
+      <button id="training-start" class="primary">Start Training</button>
+      <button id="training-hint">Hint</button>
+      <button id="training-export-json">Export training JSON</button>
+      <button id="training-export-md">Export training MD</button>
+      <span id="training-status">No active training.</span>
+    </section>
+    <section class="toolbar">
       <strong>Case run</strong>
       <select id="case-select"></select>
       <button id="case-start" class="primary">Start Case run</button>
@@ -1723,6 +2174,13 @@ def _render_workbench_app() -> str:
           <p id="note-status"></p>
           <h3>Notes</h3>
           <div id="notes" class="kv"></div>
+          <h3>Learning objectives</h3>
+          <div id="learning-objectives" class="kv"></div>
+          <h3>Guided steps</h3>
+          <div id="guided-steps" class="kv"></div>
+          <h3>Feedback</h3>
+          <p id="training-feedback">Start a training module for guided feedback.</p>
+          <p id="training-hint-output"></p>
           <h3>Analyst tasks</h3>
           <div id="case-tasks" class="kv"></div>
           <h3>Close case</h3>
@@ -1748,6 +2206,8 @@ def _render_workbench_app() -> str:
       selectedIncidentId: null,
       cases: [],
       activeCaseRun: null,
+      trainingModules: [],
+      activeTraining: null,
       incidents: []
     };
 
@@ -1766,8 +2226,53 @@ def _render_workbench_app() -> str:
         })
         .join('');
       await loadScenario(state.scenarios[0].scenario_id);
+      await loadTrainingModules();
       await loadCases();
       await loadIncidents();
+    }
+
+    async function loadTrainingModules() {
+      const response = await fetch('/api/training');
+      const payload = await response.json();
+      state.trainingModules = payload.modules;
+      $('training-select').innerHTML = state.trainingModules.map((item) =>
+        `<option value="${h(item.module_id)}">${h(item.module_id)} - ${h(item.title)}</option>`
+      ).join('');
+      if (payload.runs.length && !state.activeTraining) {
+        await loadTrainingRun(payload.runs[0].id);
+      } else if (state.trainingModules.length) {
+        renderTrainingModulePreview(state.trainingModules[0]);
+      }
+    }
+
+    function renderTrainingModulePreview(module) {
+      $('learning-objectives').innerHTML = module.objectives.map((objective) =>
+        `<div>${h(objective)}</div>`
+      ).join('');
+      $('guided-steps').innerHTML = module.guided_steps.map((step) =>
+        `<div>${h(step.label)}</div>`
+      ).join('');
+      $('training-feedback').textContent = module.summary;
+    }
+
+    async function startTrainingRun() {
+      pause();
+      const response = await fetch('/api/training/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({module_id: $('training-select').value || 'TRAIN-001'})
+      });
+      const payload = await response.json();
+      renderTrainingRun(payload);
+      await loadIncidents(payload.case_run.incident ? payload.case_run.incident.id : null);
+    }
+
+    async function loadTrainingRun(id) {
+      const response = await fetch(`/api/training/${id}`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      renderTrainingRun(payload);
+      await loadIncidents(payload.case_run.incident ? payload.case_run.incident.id : null);
     }
 
     async function loadCases() {
@@ -1791,6 +2296,9 @@ def _render_workbench_app() -> str:
       });
       const payload = await response.json();
       renderCaseRun(payload);
+      if (state.activeTraining) {
+        await loadTrainingRun(state.activeTraining.run.id);
+      }
       await loadIncidents(payload.incident ? payload.incident.id : null);
     }
 
@@ -1847,13 +2355,20 @@ def _render_workbench_app() -> str:
       state.selectedIncidentId = null;
       state.incident = null;
       state.activeCaseRun = null;
+      state.activeTraining = null;
       $('case-status').textContent = 'No active case.';
+      $('training-status').textContent = 'No active training.';
       $('case-tasks').innerHTML = '';
+      $('learning-objectives').innerHTML = '';
+      $('guided-steps').innerHTML = '';
+      $('training-feedback').textContent = 'Start a training module for guided feedback.';
+      $('training-hint-output').textContent = '';
       $('case-note-status').textContent = '';
       await loadIncidents();
       if (state.scenario) {
         await reset();
       }
+      await loadTrainingModules();
       await loadCases();
     }
 
@@ -1986,6 +2501,38 @@ def _render_workbench_app() -> str:
       renderNotes([]);
     }
 
+    function renderTrainingRun(payload) {
+      state.activeTraining = payload;
+      renderCaseRun(payload.case_run);
+      $('training-status').textContent =
+        `${payload.module.module_id} run ${payload.run.id} | ${payload.run.status}`;
+      $('learning-objectives').innerHTML = payload.module.objectives.map((objective) =>
+        `<div>${h(objective)}</div>`
+      ).join('');
+      $('guided-steps').innerHTML = payload.checkpoints.map((checkpoint) => `
+        <div>
+          <label>
+            <input
+              type="checkbox"
+              data-checkpoint="${h(checkpoint.checkpoint_id)}"
+              ${checkpoint.completed ? 'checked' : ''}
+            >
+            ${h(checkpoint.label)}
+          </label>
+        </div>
+      `).join('');
+      document.querySelectorAll('[data-checkpoint]').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => updateTrainingCheckpoint(
+          checkbox.dataset.checkpoint,
+          checkbox.checked
+        ));
+      });
+      $('training-feedback').textContent = payload.feedback;
+      $('training-hint-output').textContent = payload.latest_hint
+        ? `Hint: ${payload.latest_hint}`
+        : (payload.hints.length ? `Hint: ${payload.hints[payload.hints.length - 1].hint}` : '');
+    }
+
     function renderEvents(events) {
       $('events').innerHTML = events.map((event) => `
         <tr>
@@ -2076,7 +2623,21 @@ def _render_workbench_app() -> str:
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({task_id: taskId, completed})
       });
-      renderCaseRun(await response.json());
+      const payload = await response.json();
+      renderCaseRun(payload);
+      if (state.activeTraining) {
+        await loadTrainingRun(state.activeTraining.run.id);
+      }
+    }
+
+    async function updateTrainingCheckpoint(checkpointId, completed) {
+      if (!state.activeTraining) return;
+      const response = await fetch(`/api/training/${state.activeTraining.run.id}/checkpoint`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({checkpoint_id: checkpointId, completed})
+      });
+      renderTrainingRun(await response.json());
     }
 
     async function exportEvidence(format) {
@@ -2112,6 +2673,33 @@ def _render_workbench_app() -> str:
       URL.revokeObjectURL(url);
     }
 
+    async function exportTrainingEvidence(format) {
+      if (!state.activeTraining) {
+        $('training-feedback').textContent = 'Start a training module first.';
+        return;
+      }
+      const id = state.activeTraining.run.id;
+      const response = await fetch(`/api/evidence?training=${id}&format=${format}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `training-${id}-evidence.${format}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function requestHint() {
+      if (!state.activeTraining) {
+        $('training-feedback').textContent = 'Start a training module first.';
+        return;
+      }
+      const response = await fetch(`/api/training/${state.activeTraining.run.id}/hint`, {
+        method: 'POST'
+      });
+      renderTrainingRun(await response.json());
+    }
+
     async function closeCase() {
       if (!state.activeCaseRun) {
         $('case-note-status').textContent = 'Start a case run first.';
@@ -2127,6 +2715,9 @@ def _render_workbench_app() -> str:
       });
       const payload = await response.json();
       renderCaseRun(payload);
+      if (state.activeTraining) {
+        await loadTrainingRun(state.activeTraining.run.id);
+      }
       $('case-note-status').textContent = `Closed: ${payload.run.decision}`;
       await loadIncidents(payload.incident ? payload.incident.id : null);
     }
@@ -2158,6 +2749,10 @@ def _render_workbench_app() -> str:
     $('filter-status').addEventListener('change', () => loadIncidents());
     $('filter-severity').addEventListener('change', () => loadIncidents());
     $('filter-entity').addEventListener('input', () => loadIncidents());
+    $('training-start').addEventListener('click', startTrainingRun);
+    $('training-hint').addEventListener('click', requestHint);
+    $('training-export-json').addEventListener('click', () => exportTrainingEvidence('json'));
+    $('training-export-md').addEventListener('click', () => exportTrainingEvidence('md'));
     $('case-start').addEventListener('click', startCaseRun);
     $('case-tick').addEventListener('click', tickCaseRun);
     $('case-export-json').addEventListener('click', () => exportCaseEvidence('json'));
@@ -2208,6 +2803,16 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
             scenario_id = params.get("scenario", ["SENT-006-POS"])[0]
             self._send_json(live_state(scenario_id))
             return
+        if parsed.path == "/api/training":
+            self._send_json(training_index())
+            return
+        if parsed.path.startswith("/api/training/"):
+            training_run_id = parsed.path.strip("/").split("/")[2]
+            try:
+                self._send_json(training_run_detail(int(training_run_id)))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=404)
+            return
         if parsed.path == "/api/cases":
             self._send_json(case_index())
             return
@@ -2237,8 +2842,24 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             incident_param = params.get("incident", [None])[0]
             case_param = params.get("case", [None])[0]
+            training_param = params.get("training", [None])[0]
             scenario_id = params.get("scenario", ["SENT-006-POS"])[0]
             output_format = params.get("format", ["json"])[0]
+            if training_param is not None:
+                try:
+                    training_run_id = int(training_param)
+                    detail = training_run_detail(training_run_id)
+                    if output_format == "md":
+                        self._send_text(
+                            training_evidence_markdown(training_run_id),
+                            "text/markdown; charset=utf-8",
+                        )
+                        return
+                    self._send_json(detail)
+                    return
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=404)
+                    return
             if case_param is not None:
                 try:
                     case_run_id = int(case_param)
@@ -2299,6 +2920,29 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/tick":
                 self._send_json(tick_run(scenario_id))
+                return
+            if parsed.path == "/api/training/start":
+                payload = self._read_json_body()
+                self._send_json(
+                    start_training_run(str(payload.get("module_id", "TRAIN-001")))
+                )
+                return
+            if parsed.path.startswith("/api/training/") and parsed.path.endswith(
+                "/checkpoint"
+            ):
+                parts = parsed.path.strip("/").split("/")
+                payload = self._read_json_body()
+                self._send_json(
+                    update_training_checkpoint(
+                        int(parts[2]),
+                        str(payload.get("checkpoint_id", "")),
+                        bool(payload.get("completed", True)),
+                    )
+                )
+                return
+            if parsed.path.startswith("/api/training/") and parsed.path.endswith("/hint"):
+                parts = parsed.path.strip("/").split("/")
+                self._send_json(request_training_hint(int(parts[2])))
                 return
             if parsed.path == "/api/cases/start":
                 payload = self._read_json_body()

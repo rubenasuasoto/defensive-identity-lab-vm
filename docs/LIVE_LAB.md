@@ -67,6 +67,18 @@ New, Investigating, Benign, Suspicious, Escalated, Closed
 
 The case remains local in `live_lab.sqlite` until `Reset runtime state` is used.
 
+## Training Mode
+
+`TRAIN-001` teaches the same `CASE-001` workflow for beginner SOC analysts. It adds:
+
+- Learning objectives for benign noise, signal correlation, entities and closure.
+- Guided steps that can be checked off during the investigation.
+- Progressive hints that nudge the learner without revealing everything at once.
+- Feedback when the linked case is closed.
+- JSON or Markdown training evidence export.
+
+Expected decisions are `Suspicious` or `Escalated`. Closing as `Benign` produces corrective feedback because the correlated cloud and endpoint evidence should be investigated.
+
 ## Local state
 
 The live lab writes local runtime state to:
