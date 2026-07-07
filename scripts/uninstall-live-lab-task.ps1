@@ -17,3 +17,8 @@ if (Test-Path $StartupPath) {
     Remove-Item -LiteralPath $StartupPath -Force
     Write-Host "Removed Startup fallback: $StartupPath."
 }
+
+$StopScript = Join-Path $PSScriptRoot "stop-live-lab.ps1"
+if (Test-Path $StopScript) {
+    & $StopScript
+}

@@ -98,6 +98,14 @@ Remove the Scheduled Task or Startup folder fallback:
 .\scripts\uninstall-live-lab-task.ps1
 ```
 
+Update safely when the Live Lab may already be running:
+
+```powershell
+.\scripts\update-live-lab.ps1
+```
+
+The updater stops the local Live Lab process before `uv sync` so Windows does not keep `.venv\Scripts\identitylab.exe` locked.
+
 ## Scope
 
 This setup uses synthetic data only. It does not connect to production tenants, ingest real logs, store credentials, run payloads or modify Windows security settings.

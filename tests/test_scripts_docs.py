@@ -9,6 +9,8 @@ def test_live_lab_task_scripts_exist() -> None:
         "scripts/uninstall-live-lab-task.ps1",
         "scripts/open-live-lab.ps1",
         "scripts/run-live-lab-task.ps1",
+        "scripts/stop-live-lab.ps1",
+        "scripts/update-live-lab.ps1",
     ]:
         assert (ROOT / relative_path).is_file()
 
@@ -25,6 +27,8 @@ def test_live_lab_docs_cover_persistence() -> None:
     assert "Startup folder" in portable_doc
     assert "install-live-lab-task.ps1" in readme
     assert "Startup folder" in readme
+    assert "update-live-lab.ps1" in readme
+    assert "update-live-lab.ps1" in portable_doc
 
 
 def test_live_lab_task_script_has_local_account_fallback() -> None:
@@ -36,6 +40,16 @@ def test_live_lab_task_script_has_local_account_fallback() -> None:
     assert "Startup fallback" in script
     assert "GetFolderPath(\"Startup\")" in script
     assert "GetFolderPath(\"Startup\")" in uninstall
+
+
+def test_safe_update_stops_live_lab_before_uv_sync() -> None:
+    updater = (ROOT / "scripts/update-live-lab.ps1").read_text(encoding="utf-8")
+    stopper = (ROOT / "scripts/stop-live-lab.ps1").read_text(encoding="utf-8")
+
+    assert "stop-live-lab.ps1" in updater
+    assert "uv sync --extra dev --locked" in updater
+    assert "git pull" in updater
+    assert "identitylab.exe" in stopper
 
 
 def test_runtime_artifacts_are_ignored() -> None:

@@ -71,6 +71,8 @@ Local VM helper commands:
 .\scripts\vm-evidence.ps1
 .\scripts\start-local-hub.ps1
 .\scripts\start-live-lab.ps1
+.\scripts\stop-live-lab.ps1
+.\scripts\update-live-lab.ps1
 .\scripts\install-live-lab-task.ps1
 .\scripts\open-live-lab.ps1
 ```
@@ -117,4 +119,11 @@ Remove it with:
 
 ```powershell
 .\scripts\uninstall-live-lab-task.ps1
+```
+
+For updates on the lab computer, use the safe updater so Windows does not keep
+`.venv\Scripts\identitylab.exe` locked:
+
+```powershell
+.\scripts\update-live-lab.ps1
 ```
