@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+from identitylab.paths import LIVE_DB
 
 SCOPE_WARNING = (
     "Synthetic lab only. No production logs, credentials, tenants, tokens, malware, "
@@ -228,7 +233,180 @@ def scenario_to_dict(scenario: LiveScenario) -> dict[str, object]:
     }
 
 
-def evidence_markdown(scenario: LiveScenario) -> str:
+def init_store(db_path: Path = LIVE_DB) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS run_state (
+                scenario_id TEXT PRIMARY KEY,
+                next_index INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scenario_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                emitted_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS incidents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scenario_id TEXT NOT NULL,
+                detection TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                status TEXT NOT NULL,
+                account TEXT NOT NULL,
+                ip TEXT NOT NULL,
+                host TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analyst_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+
+def reset_run(scenario_id: str, db_path: Path = LIVE_DB) -> dict[str, object]:
+    scenario = _require_scenario(scenario_id)
+    init_store(db_path)
+    now = _now()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DELETE FROM events WHERE scenario_id = ?", (scenario_id,))
+        connection.execute("DELETE FROM incidents WHERE scenario_id = ?", (scenario_id,))
+        connection.execute(
+            """
+            INSERT INTO run_state (scenario_id, next_index, started_at, updated_at)
+            VALUES (?, 0, ?, ?)
+            ON CONFLICT(scenario_id) DO UPDATE SET
+              next_index = 0,
+              started_at = excluded.started_at,
+              updated_at = excluded.updated_at
+            """,
+            (scenario_id, now, now),
+        )
+    return live_state(scenario.scenario_id, db_path)
+
+
+def tick_run(scenario_id: str, db_path: Path = LIVE_DB) -> dict[str, object]:
+    scenario = _require_scenario(scenario_id)
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        state = connection.execute(
+            "SELECT next_index FROM run_state WHERE scenario_id = ?",
+            (scenario_id,),
+        ).fetchone()
+        if state is None:
+            reset_run(scenario_id, db_path)
+            next_index = 0
+        else:
+            next_index = int(state[0])
+        if next_index >= len(scenario.events):
+            return live_state(scenario_id, db_path)
+
+        event = dict(scenario.events[next_index])
+        event["sequence"] = next_index + 1
+        event["emitted_at"] = _now()
+        connection.execute(
+            """
+            INSERT INTO events (scenario_id, sequence, emitted_at, payload)
+            VALUES (?, ?, ?, ?)
+            """,
+            (scenario_id, next_index + 1, event["emitted_at"], json.dumps(event)),
+        )
+        connection.execute(
+            "UPDATE run_state SET next_index = ?, updated_at = ? WHERE scenario_id = ?",
+            (next_index + 1, _now(), scenario_id),
+        )
+    _evaluate_and_store_incident(scenario, db_path)
+    return live_state(scenario_id, db_path)
+
+
+def live_state(scenario_id: str, db_path: Path = LIVE_DB) -> dict[str, object]:
+    scenario = _require_scenario(scenario_id)
+    init_store(db_path)
+    events = _load_events(scenario_id, db_path)
+    incident = _load_incident(scenario_id, db_path)
+    evaluation = evaluate_detection(scenario, events)
+    return {
+        "scenario": scenario_to_dict(scenario),
+        "events": events,
+        "event_count": len(events),
+        "complete": len(events) >= len(scenario.events),
+        "next_event": len(events) + 1 if len(events) < len(scenario.events) else None,
+        "evaluation": evaluation,
+        "incident": incident,
+        "analyst_notes": _load_notes(incident["id"], db_path) if incident else [],
+        "scope_warning": SCOPE_WARNING,
+    }
+
+
+def add_analyst_note(
+    incident_id: int,
+    status: str,
+    note: str,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    clean_status = status.strip() or "Investigating"
+    clean_note = note.strip() or "No analyst note provided."
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO analyst_notes (incident_id, status, note, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (incident_id, clean_status, clean_note, _now()),
+        )
+        connection.execute(
+            "UPDATE incidents SET status = ? WHERE id = ?",
+            (clean_status, incident_id),
+        )
+    return {"incident_id": incident_id, "status": clean_status, "note": clean_note}
+
+
+def evaluate_detection(
+    scenario: LiveScenario,
+    events: list[dict[str, object]],
+) -> dict[str, object]:
+    if scenario.primary_detection == "SENT-006":
+        return _evaluate_sent_006(events)
+    if scenario.primary_detection == "ENTRA-003":
+        return _evaluate_entra_003(events)
+    if scenario.primary_detection == "AUTH-003":
+        return _evaluate_auth_003(events)
+    return {
+        "status": "Observing",
+        "reason": "No local evaluator is implemented for this detection.",
+        "matched_fields": [],
+    }
+
+
+def evidence_markdown(
+    scenario: LiveScenario,
+    state: dict[str, object] | None = None,
+) -> str:
+    state = state or live_state(scenario.scenario_id)
+    events = state.get("events") or scenario.events
+    incident = state.get("incident")
+    evaluation = state.get("evaluation", {})
     lines = [
         f"# Live lab evidence: {scenario.scenario_id}",
         "",
@@ -236,19 +414,260 @@ def evidence_markdown(scenario: LiveScenario) -> str:
         f"- Primary detection: {scenario.primary_detection}",
         f"- Severity: {scenario.severity}",
         f"- Expected result: {scenario.expected_result}",
+        f"- Observed status: {evaluation.get('status', 'Unknown')}",
         f"- Analyst goal: {scenario.analyst_goal}",
         "",
         "## Events",
         "",
     ]
-    for event in scenario.events:
+    for event in events:
         lines.append(
             "- "
             f"t+{event['offset']}s {event['table']} {event['account']} "
             f"{event['ip']} {event['result']} - {event['detail']}"
         )
+    lines.extend(["", "## Detection evaluation", ""])
+    lines.append(f"- Status: {evaluation.get('status', 'Unknown')}")
+    lines.append(f"- Reason: {evaluation.get('reason', 'No reason recorded')}")
+    for field in evaluation.get("matched_fields", []):
+        lines.append(f"- Match: {field}")
+    if incident:
+        lines.extend(["", "## Incident", ""])
+        lines.append(f"- ID: {incident['id']}")
+        lines.append(f"- Status: {incident['status']}")
+        lines.append(f"- Account: {incident['account']}")
+        lines.append(f"- IP: {incident['ip']}")
+        lines.append(f"- Host: {incident['host']}")
     lines.extend(["", "## Scope", "", SCOPE_WARNING, ""])
     return "\n".join(lines)
+
+
+def _evaluate_and_store_incident(scenario: LiveScenario, db_path: Path) -> None:
+    state = live_state(scenario.scenario_id, db_path)
+    evaluation = state["evaluation"]
+    if evaluation["status"] != "Alert" or state["incident"]:
+        return
+    matched = evaluation.get("matched_entities", {})
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO incidents (
+              scenario_id, detection, severity, status, account, ip, host, reason, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scenario.scenario_id,
+                scenario.primary_detection,
+                scenario.severity,
+                "New",
+                matched.get("account", "-"),
+                matched.get("ip", "-"),
+                matched.get("host", "-"),
+                str(evaluation["reason"]),
+                _now(),
+            ),
+        )
+
+
+def _evaluate_sent_006(events: list[dict[str, object]]) -> dict[str, object]:
+    risky = [
+        event
+        for event in events
+        if event["table"] == "SigninLogs" and event["result"] == "success"
+    ]
+    failures = [event for event in events if _is_windows_result(event, "failure")]
+    successes = [event for event in events if _is_windows_result(event, "success")]
+    for cloud in risky:
+        for success in successes:
+            account_match = _account_key(cloud["account"]) == _account_key(success["account"])
+            ip_match = cloud["ip"] == success["ip"]
+            related_failures = [
+                failure
+                for failure in failures
+                if _account_key(failure["account"]) == _account_key(success["account"])
+                and failure["ip"] == success["ip"]
+            ]
+            if account_match and ip_match and len(related_failures) >= 2:
+                return _alert_evaluation(
+                    "Cloud risk, repeated Windows failures and Windows success matched.",
+                    cloud,
+                    success,
+                    ["account", "ip", "SigninLogs", "SecurityEvent"],
+                )
+    if risky and failures:
+        return _observing_evaluation(
+            "Cloud risk and endpoint failures observed; waiting for matching success.",
+            ["SigninLogs", "SecurityEvent", "account", "ip"],
+        )
+    if risky:
+        return _observing_evaluation(
+            "Cloud risk observed; waiting for endpoint activity.",
+            ["SigninLogs", "account", "ip"],
+        )
+    return _observing_evaluation("Waiting for risky cloud identity event.", [])
+
+
+def _evaluate_entra_003(events: list[dict[str, object]]) -> dict[str, object]:
+    denials = [
+        event
+        for event in events
+        if event["table"] == "SigninLogs" and event["result"] == "mfa_denied"
+    ]
+    successes = [
+        event
+        for event in events
+        if event["table"] == "SigninLogs" and event["result"] == "success"
+    ]
+    for success in successes:
+        related_denials = [
+            denial
+            for denial in denials
+            if denial["account"] == success["account"] and denial["ip"] == success["ip"]
+        ]
+        if len(related_denials) >= 2:
+            return _alert_evaluation(
+                "Repeated MFA denials followed by success for same account and IP.",
+                related_denials[0],
+                success,
+                ["account", "ip", "mfa_denied", "success"],
+            )
+    if len(denials) >= 2:
+        return _observing_evaluation(
+            "Repeated MFA denials observed; waiting for success.",
+            ["account", "ip", "mfa_denied"],
+        )
+    return _observing_evaluation("Waiting for repeated MFA denial pattern.", [])
+
+
+def _evaluate_auth_003(events: list[dict[str, object]]) -> dict[str, object]:
+    failures = [event for event in events if _is_windows_result(event, "failure")]
+    successes = [event for event in events if _is_windows_result(event, "success")]
+    for success in successes:
+        related_failures = [
+            failure
+            for failure in failures
+            if failure["account"] == success["account"] and failure["ip"] == success["ip"]
+        ]
+        if len(related_failures) >= 2:
+            return _alert_evaluation(
+                "Repeated Windows failures followed by success for same account and IP.",
+                related_failures[0],
+                success,
+                ["account", "ip", "host", "4625", "4624"],
+            )
+    if len(failures) >= 2:
+        return _observing_evaluation(
+            "Repeated Windows failures observed; waiting for successful logon.",
+            ["account", "ip", "4625"],
+        )
+    return _observing_evaluation("Waiting for repeated Windows failures.", [])
+
+
+def _alert_evaluation(
+    reason: str,
+    first: dict[str, object],
+    last: dict[str, object],
+    matched_fields: list[str],
+) -> dict[str, object]:
+    return {
+        "status": "Alert",
+        "reason": reason,
+        "matched_fields": matched_fields,
+        "matched_entities": {
+            "account": str(last["account"]),
+            "ip": str(last["ip"]),
+            "host": str(last["host"]),
+            "first_table": str(first["table"]),
+            "last_table": str(last["table"]),
+        },
+    }
+
+
+def _observing_evaluation(reason: str, matched_fields: list[str]) -> dict[str, object]:
+    return {
+        "status": "Observing",
+        "reason": reason,
+        "matched_fields": matched_fields,
+        "matched_entities": {},
+    }
+
+
+def _is_windows_result(event: dict[str, object], result: str) -> bool:
+    return event["table"] == "SecurityEvent" and event["result"] == result
+
+
+def _account_key(value: object) -> str:
+    text = str(value).lower()
+    return text.split("@", maxsplit=1)[0]
+
+
+def _load_events(scenario_id: str, db_path: Path) -> list[dict[str, object]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT payload FROM events
+            WHERE scenario_id = ?
+            ORDER BY sequence
+            """,
+            (scenario_id,),
+        ).fetchall()
+    return [json.loads(row[0]) for row in rows]
+
+
+def _load_incident(scenario_id: str, db_path: Path) -> dict[str, object] | None:
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, detection, severity, status, account, ip, host, reason, created_at
+            FROM incidents
+            WHERE scenario_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (scenario_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "detection": row[1],
+        "severity": row[2],
+        "status": row[3],
+        "account": row[4],
+        "ip": row[5],
+        "host": row[6],
+        "reason": row[7],
+        "created_at": row[8],
+    }
+
+
+def _load_notes(incident_id: int, db_path: Path) -> list[dict[str, object]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, status, note, created_at
+            FROM analyst_notes
+            WHERE incident_id = ?
+            ORDER BY id
+            """,
+            (incident_id,),
+        ).fetchall()
+    return [
+        {"id": row[0], "status": row[1], "note": row[2], "created_at": row[3]}
+        for row in rows
+    ]
+
+
+def _require_scenario(scenario_id: str) -> LiveScenario:
+    scenario = get_scenario(scenario_id)
+    if scenario is None:
+        raise ValueError(f"Unknown scenario: {scenario_id}")
+    return scenario
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def render_live_app() -> str:
@@ -319,6 +738,14 @@ def render_live_app() -> str:
       align-items: center;
       flex-wrap: wrap;
     }}
+    input, textarea {{
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px 11px;
+      width: 100%;
+      font: inherit;
+    }}
+    textarea {{ min-height: 84px; }}
     .grid {{
       display: grid;
       grid-template-columns: 1.35fr .65fr;
@@ -372,6 +799,7 @@ def render_live_app() -> str:
     }}
     .alert-text {{ color: var(--alert); font-weight: 700; }}
     .ok-text {{ color: var(--ok); font-weight: 700; }}
+    .note-form {{ display: grid; gap: 8px; margin-top: 12px; }}
     @media (max-width: 900px) {{
       .grid, .cards {{ grid-template-columns: 1fr; }}
     }}
@@ -387,6 +815,12 @@ def render_live_app() -> str:
     <section class="toolbar">
       <label for="scenario">Scenario</label>
       <select id="scenario"></select>
+      <label for="speed">Speed</label>
+      <select id="speed">
+        <option value="1200">1x</option>
+        <option value="650">2x</option>
+        <option value="120">Instant</option>
+      </select>
       <button id="start" class="primary">Start</button>
       <button id="pause">Pause</button>
       <button id="reset">Reset</button>
@@ -398,6 +832,11 @@ def render_live_app() -> str:
       <div class="metric"><span>Severity</span><strong id="severity">-</strong></div>
       <div class="metric"><span>Expected</span><strong id="expected">-</strong></div>
       <div class="metric"><span>Status</span><strong id="status">Ready</strong></div>
+    </section>
+    <section class="panel">
+      <h2>Rule evaluation</h2>
+      <p id="rule-reason">Waiting for synthetic events.</p>
+      <p id="matched-fields"></p>
     </section>
     <section class="grid">
       <div class="panel">
@@ -415,6 +854,18 @@ def render_live_app() -> str:
         <h2>Incident timeline</h2>
         <p id="summary"></p>
         <ul id="timeline" class="timeline"></ul>
+        <div class="note-form">
+          <h3>Analyst action</h3>
+          <select id="analyst-status">
+            <option>Investigating</option>
+            <option>Benign</option>
+            <option>Suspicious</option>
+            <option>Escalated</option>
+          </select>
+          <textarea id="analyst-note" placeholder="Analyst note"></textarea>
+          <button id="save-note">Save note</button>
+          <p id="note-status"></p>
+        </div>
       </div>
     </section>
   </main>
@@ -422,10 +873,8 @@ def render_live_app() -> str:
     const state = {{
       scenarios: [],
       scenario: null,
-      eventIndex: 0,
-      stepIndex: 0,
       timer: null,
-      paused: false
+      incident: null
     }};
 
     const $ = (id) => document.getElementById(id);
@@ -445,28 +894,29 @@ def render_live_app() -> str:
     async function loadScenario(id) {{
       const response = await fetch(`/api/scenarios/${{id}}`);
       state.scenario = await response.json();
-      reset();
+      await reset();
     }}
 
-    function reset() {{
+    async function reset() {{
       clearInterval(state.timer);
       state.timer = null;
-      state.eventIndex = 0;
-      state.stepIndex = 0;
-      state.paused = false;
-      $('events').innerHTML = '';
-      $('timeline').innerHTML = '';
+      state.incident = null;
+      const response = await fetch(`/api/reset?scenario=${{state.scenario.scenario_id}}`, {{
+        method: 'POST'
+      }});
+      const payload = await response.json();
       $('summary').textContent = state.scenario.summary;
       $('detection').textContent = state.scenario.primary_detection;
       $('severity').textContent = state.scenario.severity;
       $('expected').textContent = state.scenario.expected_result;
-      $('status').textContent = 'Ready';
+      $('note-status').textContent = '';
+      renderState(payload);
     }}
 
     function start() {{
       if (!state.scenario || state.timer) return;
       $('status').textContent = 'Running';
-      state.timer = setInterval(tick, 900);
+      state.timer = setInterval(tick, Number($('speed').value));
       tick();
     }}
 
@@ -478,49 +928,67 @@ def render_live_app() -> str:
       }}
     }}
 
-    function tick() {{
-      if (state.eventIndex >= state.scenario.events.length) {{
+    async function tick() {{
+      const response = await fetch(`/api/tick?scenario=${{state.scenario.scenario_id}}`, {{
+        method: 'POST'
+      }});
+      const payload = await response.json();
+      renderState(payload);
+      if (payload.complete) {{
         clearInterval(state.timer);
         state.timer = null;
-        if ($('status').textContent !== 'Alert') $('status').textContent = 'Complete';
-        return;
       }}
-      state.eventIndex += 1;
-      renderEvent(state.scenario.events[state.eventIndex - 1]);
-      renderDetectionSteps();
     }}
 
-    function renderEvent(event) {{
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td>t+${{event.offset}}s</td>
-        <td><span class="pill">${{event.table}}</span></td>
-        <td>${{event.account}}</td>
-        <td>${{event.ip}}</td>
-        <td>${{event.host}}</td>
-        <td>${{event.result}}</td>
-        <td>${{event.detail}}</td>
-      `;
-      $('events').appendChild(row);
+    function renderState(payload) {{
+      state.incident = payload.incident;
+      $('events').innerHTML = payload.events.map((event) => `
+        <tr>
+          <td>t+${{event.offset}}s</td>
+          <td><span class="pill">${{event.table}}</span></td>
+          <td>${{event.account}}</td>
+          <td>${{event.ip}}</td>
+          <td>${{event.host}}</td>
+          <td>${{event.result}}</td>
+          <td>${{event.detail}}</td>
+        </tr>
+      `).join('');
+      $('rule-reason').textContent = payload.evaluation.reason;
+      $('matched-fields').textContent = payload.evaluation.matched_fields.join(' | ');
+      if (payload.incident) {{
+        $('status').textContent = 'Alert';
+      }} else if (payload.complete) {{
+        $('status').textContent = 'Complete';
+      }} else if (payload.event_count > 0) {{
+        $('status').textContent = 'Observing';
+      }} else {{
+        $('status').textContent = 'Ready';
+      }}
+      renderTimeline(payload);
     }}
 
-    function renderDetectionSteps() {{
-      while (
-        state.stepIndex < state.scenario.detection_steps.length &&
-        state.scenario.detection_steps[state.stepIndex].after_event <= state.eventIndex
-      ) {{
-        const step = state.scenario.detection_steps[state.stepIndex];
-        const item = document.createElement('li');
-        item.className = step.status === 'alert' ? 'alert' : '';
-        const className = step.status === 'alert' ? 'alert-text' : 'ok-text';
-        const status = step.status.toUpperCase();
-        item.innerHTML =
-          `<strong class="${{className}}">${{status}}</strong>` +
-          `<p>${{step.message}}</p>`;
-        $('timeline').appendChild(item);
-        if (step.status === 'alert') $('status').textContent = 'Alert';
-        state.stepIndex += 1;
+    function renderTimeline(payload) {{
+      const items = [];
+      payload.events.forEach((event) => {{
+        items.push({{
+          status: 'event',
+          message: `${{event.table}}: ${{event.detail}}`
+        }});
+      }});
+      if (payload.incident) {{
+        items.push({{
+          status: 'alert',
+          message: `Incident #${{payload.incident.id}}: ${{payload.incident.reason}}`
+        }});
       }}
+      $('timeline').innerHTML = items.map((item) => {{
+        const className = item.status === 'alert' ? 'alert' : '';
+        const textClass = item.status === 'alert' ? 'alert-text' : 'ok-text';
+        const label = item.status === 'alert' ? 'ALERT' : 'EVENT';
+        return `<li class="${{className}}">` +
+          `<strong class="${{textClass}}">${{label}}</strong>` +
+          `<p>${{item.message}}</p></li>`;
+      }}).join('');
     }}
 
     async function exportEvidence(format) {{
@@ -535,12 +1003,31 @@ def render_live_app() -> str:
       URL.revokeObjectURL(url);
     }}
 
+    async function saveNote() {{
+      if (!state.incident) {{
+        $('note-status').textContent = 'Run a scenario until an incident is created.';
+        return;
+      }}
+      const response = await fetch('/api/analyst-note', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{
+          incident_id: state.incident.id,
+          status: $('analyst-status').value,
+          note: $('analyst-note').value
+        }})
+      }});
+      const payload = await response.json();
+      $('note-status').textContent = `Saved: ${{payload.status}}`;
+    }}
+
     $('scenario').addEventListener('change', (event) => loadScenario(event.target.value));
     $('start').addEventListener('click', start);
     $('pause').addEventListener('click', pause);
     $('reset').addEventListener('click', reset);
     $('export-json').addEventListener('click', () => exportEvidence('json'));
     $('export-md').addEventListener('click', () => exportEvidence('md'));
+    $('save-note').addEventListener('click', saveNote);
     loadScenarios();
   </script>
 </body>
@@ -586,9 +1073,37 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "scenario not found"}, status=404)
                 return
             if output_format == "md":
-                self._send_text(evidence_markdown(scenario), "text/markdown; charset=utf-8")
+                self._send_text(
+                    evidence_markdown(scenario, live_state(scenario_id)),
+                    "text/markdown; charset=utf-8",
+                )
                 return
-            self._send_json(scenario_to_dict(scenario))
+            self._send_json(live_state(scenario_id))
+            return
+        self._send_json({"error": "not found"}, status=404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        scenario_id = params.get("scenario", ["SENT-006-POS"])[0]
+        try:
+            if parsed.path == "/api/reset":
+                self._send_json(reset_run(scenario_id))
+                return
+            if parsed.path == "/api/tick":
+                self._send_json(tick_run(scenario_id))
+                return
+            if parsed.path == "/api/analyst-note":
+                payload = self._read_json_body()
+                result = add_analyst_note(
+                    int(payload.get("incident_id", 0)),
+                    str(payload.get("status", "Investigating")),
+                    str(payload.get("note", "")),
+                )
+                self._send_json(result)
+                return
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=404)
             return
         self._send_json({"error": "not found"}, status=404)
 
@@ -610,3 +1125,9 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _read_json_body(self) -> dict[str, object]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
