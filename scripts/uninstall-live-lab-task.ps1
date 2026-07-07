@@ -1,13 +1,19 @@
 $ErrorActionPreference = "Stop"
 
 $TaskName = "IdentityLabLiveLab"
+$StartupPath = Join-Path ([Environment]::GetFolderPath("Startup")) "$TaskName.cmd"
 $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
-if ($null -eq $Task) {
-    Write-Host "Scheduled task not found: $TaskName"
-    exit 0
+if ($null -ne $Task) {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
+    Write-Host "Uninstalled Scheduled Task: $TaskName."
+}
+else {
+    Write-Host "Scheduled Task not found: $TaskName"
 }
 
-Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-Write-Host "Uninstalled $TaskName."
+if (Test-Path $StartupPath) {
+    Remove-Item -LiteralPath $StartupPath -Force
+    Write-Host "Removed Startup fallback: $StartupPath."
+}

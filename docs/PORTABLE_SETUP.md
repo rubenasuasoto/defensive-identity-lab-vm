@@ -72,11 +72,13 @@ http://127.0.0.1:8090/
 
 ## Persistent Live Lab startup
 
-On the dedicated lab computer, install the local Scheduled Task:
+On the dedicated lab computer, install persistent startup:
 
 ```powershell
 .\scripts\install-live-lab-task.ps1
 ```
+
+The installer tries a least-privilege Scheduled Task first. If the local account cannot register tasks, it falls back to the current user's Startup folder.
 
 This starts `identitylab live --host 127.0.0.1 --port 8090` when the user signs in and writes local logs under:
 
@@ -90,7 +92,7 @@ Open the Workbench:
 .\scripts\open-live-lab.ps1
 ```
 
-Remove the Scheduled Task:
+Remove the Scheduled Task or Startup folder fallback:
 
 ```powershell
 .\scripts\uninstall-live-lab-task.ps1

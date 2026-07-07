@@ -103,6 +103,9 @@ Windows lab computer, install startup persistence with:
 .\scripts\install-live-lab-task.ps1
 ```
 
+The installer tries a least-privilege Scheduled Task first and falls back to the
+current user's Startup folder if Windows blocks task registration.
+
 Remove it with:
 
 ```powershell

@@ -66,10 +66,16 @@ Use `Reset scenario` to clear the active scenario. Use `Reset runtime state` to 
 
 ## Persistent startup on Windows
 
-Install a Scheduled Task that starts the Live Lab when the lab user signs in:
+Install a persistent launcher that starts the Live Lab when the lab user signs in:
 
 ```powershell
 .\scripts\install-live-lab-task.ps1
+```
+
+The installer first tries to create a least-privilege Scheduled Task for the current user. If Windows blocks task registration for the local account, it creates a Startup folder fallback instead. Both options run the same local command:
+
+```text
+identitylab live --host 127.0.0.1 --port 8090
 ```
 
 Open the Workbench:
@@ -78,7 +84,7 @@ Open the Workbench:
 .\scripts\open-live-lab.ps1
 ```
 
-Uninstall the task:
+Uninstall the Scheduled Task or Startup folder fallback:
 
 ```powershell
 .\scripts\uninstall-live-lab-task.ps1
