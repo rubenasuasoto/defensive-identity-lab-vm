@@ -2,6 +2,9 @@ from pathlib import Path
 
 from identitylab.live import (
     add_analyst_note,
+    case_evidence_markdown,
+    case_index,
+    close_case_run,
     evidence_markdown,
     get_scenario,
     incident_detail,
@@ -13,7 +16,10 @@ from identitylab.live import (
     reset_runtime,
     scenario_index,
     scenario_to_dict,
+    start_case_run,
+    tick_case_run,
     tick_run,
+    update_case_task,
     update_incident_action,
 )
 
@@ -47,7 +53,11 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "entities" in html
     assert "rule evaluation" in html
     assert "reset runtime state" in html
+    assert "case run" in html
+    assert "analyst tasks" in html
+    assert "close case" in html
     assert "fetch('/api/scenarios')" in html
+    assert "fetch('/api/cases')" in html
     assert "/api/state?scenario=" in html
     assert "<script src" not in html
     assert "<form" not in html
@@ -166,3 +176,58 @@ def test_reset_runtime_clears_events_incidents_and_notes(tmp_path: Path) -> None
     assert result["reset"] is True
     assert incident_queue(db_path) == []
     assert live_state("ENTRA-003-POS", db_path)["event_count"] == 0
+
+
+def test_case_run_generates_realistic_soc_case(tmp_path: Path) -> None:
+    db_path = tmp_path / "live.sqlite"
+
+    index = case_index(db_path)
+    assert index["cases"][0]["case_id"] == "CASE-001"
+
+    state = start_case_run("CASE-001", db_path)
+    assert state["run"]["status"] == "Running"
+    assert state["event_count"] == 0
+    assert len(state["tasks"]) == 5
+
+    for _ in range(8):
+        state = tick_case_run(int(state["run"]["id"]), db_path)
+
+    assert state["complete"] is True
+    assert state["counts"]["benign"] >= 3
+    assert state["counts"]["signal"] >= 4
+    assert state["incident"]["detection"] == "SENT-006"
+    assert state["evaluation"]["status"] == "Alert"
+
+
+def test_case_tasks_close_and_export(tmp_path: Path) -> None:
+    db_path = tmp_path / "live.sqlite"
+    state = start_case_run("CASE-001", db_path)
+    run_id = int(state["run"]["id"])
+    for _ in range(8):
+        tick_case_run(run_id, db_path)
+
+    state = update_case_task(run_id, "review-correlation", True, db_path)
+    assert any(
+        task["task_id"] == "review-correlation" and task["completed"]
+        for task in state["tasks"]
+    )
+
+    state = close_case_run(run_id, "Escalated", "Synthetic case ready for review.", db_path)
+    assert state["run"]["status"] == "Closed"
+    assert state["run"]["decision"] == "Escalated"
+    assert state["incident"]["status"] == "Escalated"
+
+    markdown = case_evidence_markdown(run_id, db_path)
+    assert "Case evidence: CASE-001" in markdown
+    assert "Synthetic case ready for review." in markdown
+    assert "Analyst tasks" in markdown
+
+
+def test_reset_runtime_clears_case_runs(tmp_path: Path) -> None:
+    db_path = tmp_path / "live.sqlite"
+    state = start_case_run("CASE-001", db_path)
+    tick_case_run(int(state["run"]["id"]), db_path)
+
+    reset_runtime(db_path)
+
+    assert case_index(db_path)["runs"] == []

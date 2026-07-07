@@ -106,6 +106,10 @@ Windows lab computer, install startup persistence with:
 The installer tries a least-privilege Scheduled Task first and falls back to the
 current user's Startup folder if Windows blocks task registration.
 
+The Live Lab also includes `CASE-001`, a guided SOC-style case run with benign
+noise, an alertable cross-source identity incident, analyst tasks, case closure
+and JSON/Markdown evidence export.
+
 Remove it with:
 
 ```powershell

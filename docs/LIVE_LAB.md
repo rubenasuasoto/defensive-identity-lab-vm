@@ -45,12 +45,27 @@ The Workbench is intentionally local and synthetic, but it behaves like a small 
 - `Entities`: accounts, IPs, hosts, sources and tables seen in the incident.
 - `Rule evaluation`: why the local evaluator alerted and which fields matched.
 - `Analyst action`: persistent status and notes.
+- `Case run`: a guided SOC-style investigation with benign noise and one primary alert.
+- `Analyst tasks`: checklist items for account, IP, host, MFA and correlation review.
 
 Allowed statuses:
 
 ```text
 New, Investigating, Benign, Suspicious, Escalated, Closed
 ```
+
+## Case run
+
+`CASE-001` is a synthetic cross-source identity investigation. It mixes benign Windows, Entra and audit activity with a primary `SENT-006` correlation:
+
+1. Start `CASE-001`.
+2. Click `Next case event` to emit benign and alertable events into the same timeline.
+3. Review the filtered incident queue, entities and rule evaluation.
+4. Complete analyst tasks.
+5. Close the case with `Benign`, `Suspicious`, `Escalated` or `Closed`.
+6. Export case evidence as JSON or Markdown.
+
+The case remains local in `live_lab.sqlite` until `Reset runtime state` is used.
 
 ## Local state
 

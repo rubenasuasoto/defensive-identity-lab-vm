@@ -37,6 +37,17 @@ class LiveScenario:
     detection_steps: list[dict[str, object]]
 
 
+@dataclass(frozen=True)
+class SocCase:
+    case_id: str
+    title: str
+    summary: str
+    primary_detection: str
+    severity: str
+    events: list[dict[str, object]]
+    tasks: list[dict[str, str]]
+
+
 SCENARIOS: list[LiveScenario] = [
     LiveScenario(
         scenario_id="SENT-006-POS",
@@ -210,6 +221,128 @@ SCENARIOS: list[LiveScenario] = [
 ]
 
 
+SOC_CASES: list[SocCase] = [
+    SocCase(
+        case_id="CASE-001",
+        title="Cross-source identity investigation",
+        summary=(
+            "A guided SOC case with benign identity noise, unrelated endpoint activity and "
+            "one cross-source identity incident for the analyst to close."
+        ),
+        primary_detection="SENT-006",
+        severity="High",
+        events=[
+            {
+                "offset": 0,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "nora.patel@example.test",
+                "ip": "198.51.100.31",
+                "host": "-",
+                "result": "success",
+                "severity": "Informational",
+                "classification": "benign",
+                "detail": "Expected browser sign-in from a known source.",
+            },
+            {
+                "offset": 4,
+                "table": "SecurityEvent",
+                "source": "Windows",
+                "account": "svc-backup",
+                "ip": "192.0.2.20",
+                "host": "SRV-BACKUP-01",
+                "result": "failure",
+                "severity": "Low",
+                "classification": "benign",
+                "detail": "Single failed service logon outside the correlated account.",
+            },
+            {
+                "offset": 9,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "alex.morgan@example.test",
+                "ip": "203.0.113.42",
+                "host": "-",
+                "result": "success",
+                "severity": "High",
+                "classification": "signal",
+                "detail": "High-risk sign-in to Azure Portal not blocked by Conditional Access.",
+            },
+            {
+                "offset": 13,
+                "table": "AuditLogs",
+                "source": "Entra",
+                "account": "helpdesk.admin@example.test",
+                "ip": "198.51.100.44",
+                "host": "-",
+                "result": "success",
+                "severity": "Low",
+                "classification": "benign",
+                "detail": "Expected group membership update from helpdesk workflow.",
+            },
+            {
+                "offset": 18,
+                "table": "SecurityEvent",
+                "source": "Windows",
+                "account": "alex.morgan",
+                "ip": "203.0.113.42",
+                "host": "WKST-042",
+                "result": "failure",
+                "severity": "Medium",
+                "classification": "signal",
+                "detail": "Windows event 4625 failed logon.",
+            },
+            {
+                "offset": 22,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "jamie.lee@example.test",
+                "ip": "198.51.100.17",
+                "host": "-",
+                "result": "mfa_denied",
+                "severity": "Low",
+                "classification": "benign",
+                "detail": "Single MFA denial without follow-up success in this case window.",
+            },
+            {
+                "offset": 27,
+                "table": "SecurityEvent",
+                "source": "Windows",
+                "account": "alex.morgan",
+                "ip": "203.0.113.42",
+                "host": "WKST-042",
+                "result": "failure",
+                "severity": "Medium",
+                "classification": "signal",
+                "detail": "Second Windows event 4625 failed logon.",
+            },
+            {
+                "offset": 34,
+                "table": "SecurityEvent",
+                "source": "Windows",
+                "account": "alex.morgan",
+                "ip": "203.0.113.42",
+                "host": "WKST-042",
+                "result": "success",
+                "severity": "High",
+                "classification": "signal",
+                "detail": "Windows event 4624 successful logon after cloud risk and failures.",
+            },
+        ],
+        tasks=[
+            {
+                "task_id": "review-account",
+                "label": "Review account identity and expected owner.",
+            },
+            {"task_id": "review-ip", "label": "Check source IP across cloud and endpoint."},
+            {"task_id": "review-host", "label": "Review impacted workstation context."},
+            {"task_id": "review-mfa", "label": "Check MFA and Conditional Access context."},
+            {"task_id": "review-correlation", "label": "Confirm Entra and Windows correlation."},
+        ],
+    )
+]
+
+
 def scenario_index() -> list[dict[str, str]]:
     return [
         {
@@ -224,6 +357,51 @@ def scenario_index() -> list[dict[str, str]]:
 
 def get_scenario(scenario_id: str) -> LiveScenario | None:
     return next((scenario for scenario in SCENARIOS if scenario.scenario_id == scenario_id), None)
+
+
+def case_index(db_path: Path = LIVE_DB) -> dict[str, object]:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, case_id, run_key, status, decision, started_at, closed_at
+            FROM case_runs
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return {
+        "cases": [case_to_dict(case) for case in SOC_CASES],
+        "runs": [
+            {
+                "id": row[0],
+                "case_id": row[1],
+                "run_key": row[2],
+                "status": row[3],
+                "decision": row[4],
+                "started_at": row[5],
+                "closed_at": row[6],
+            }
+            for row in rows
+        ],
+        "scope_warning": SCOPE_WARNING,
+    }
+
+
+def get_case(case_id: str) -> SocCase | None:
+    return next((case for case in SOC_CASES if case.case_id == case_id), None)
+
+
+def case_to_dict(case: SocCase) -> dict[str, object]:
+    return {
+        "case_id": case.case_id,
+        "title": case.title,
+        "summary": case.summary,
+        "primary_detection": case.primary_detection,
+        "severity": case.severity,
+        "event_total": len(case.events),
+        "tasks": case.tasks,
+        "scope_warning": SCOPE_WARNING,
+    }
 
 
 def scenario_to_dict(scenario: LiveScenario) -> dict[str, object]:
@@ -288,6 +466,33 @@ def init_store(db_path: Path = LIVE_DB) -> None:
                 status TEXT NOT NULL,
                 note TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id TEXT NOT NULL,
+                run_key TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                decision_note TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                closed_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_run_id INTEGER NOT NULL,
+                task_id TEXT NOT NULL,
+                label TEXT NOT NULL,
+                completed INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(case_run_id, task_id)
             )
             """
         )
@@ -429,12 +634,33 @@ def incident_detail(incident_id: int, db_path: Path = LIVE_DB) -> dict[str, obje
     incident = _load_incident_by_id(incident_id, db_path)
     if incident is None:
         return None
-    scenario = _require_scenario(str(incident["scenario_id"]))
-    events = _load_events(scenario.scenario_id, db_path)
-    evaluation = evaluate_detection(scenario, events)
+    scenario_id = str(incident["scenario_id"])
+    scenario = get_scenario(scenario_id)
+    case_run = _load_case_run_by_key(scenario_id, db_path)
+    events = _load_events(scenario_id, db_path)
+    if scenario is not None:
+        scenario_payload = scenario_to_dict(scenario)
+        evaluation = evaluate_detection(scenario, events)
+    elif case_run is not None:
+        case = _require_case(str(case_run["case_id"]))
+        scenario_payload = {
+            "scenario_id": scenario_id,
+            "title": case.title,
+            "summary": case.summary,
+            "severity": case.severity,
+            "primary_detection": case.primary_detection,
+            "expected_result": "Alert",
+            "analyst_goal": "Close the synthetic SOC case with evidence.",
+            "scope_warning": SCOPE_WARNING,
+            "events": case.events,
+            "detection_steps": [],
+        }
+        evaluation = evaluate_case_detection(case, events)
+    else:
+        raise ValueError(f"Unknown incident source: {scenario_id}")
     return {
         "incident": incident,
-        "scenario": scenario_to_dict(scenario),
+        "scenario": scenario_payload,
         "events": events,
         "entities": incident_entities(incident, events),
         "evaluation": evaluation,
@@ -512,12 +738,230 @@ def reset_runtime(db_path: Path = LIVE_DB) -> dict[str, object]:
             "incidents": connection.execute("SELECT COUNT(*) FROM incidents").fetchone()[0],
             "notes": connection.execute("SELECT COUNT(*) FROM analyst_notes").fetchone()[0],
             "run_state": connection.execute("SELECT COUNT(*) FROM run_state").fetchone()[0],
+            "case_runs": connection.execute("SELECT COUNT(*) FROM case_runs").fetchone()[0],
+            "case_tasks": connection.execute("SELECT COUNT(*) FROM case_tasks").fetchone()[0],
         }
+        connection.execute("DELETE FROM case_tasks")
+        connection.execute("DELETE FROM case_runs")
         connection.execute("DELETE FROM analyst_notes")
         connection.execute("DELETE FROM incidents")
         connection.execute("DELETE FROM events")
         connection.execute("DELETE FROM run_state")
     return {"reset": True, "deleted": counts, "scope_warning": SCOPE_WARNING}
+
+
+def start_case_run(case_id: str = "CASE-001", db_path: Path = LIVE_DB) -> dict[str, object]:
+    case = _require_case(case_id)
+    init_store(db_path)
+    now = _now()
+    with sqlite3.connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO case_runs (
+              case_id, run_key, status, decision, decision_note, started_at, closed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (case.case_id, "pending", "Running", "", "", now, ""),
+        )
+        run_id = int(cursor.lastrowid)
+        run_key = f"{case.case_id}-RUN-{run_id}"
+        connection.execute(
+            "UPDATE case_runs SET run_key = ? WHERE id = ?",
+            (run_key, run_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO run_state (scenario_id, next_index, started_at, updated_at)
+            VALUES (?, 0, ?, ?)
+            """,
+            (run_key, now, now),
+        )
+        for task in case.tasks:
+            connection.execute(
+                """
+                INSERT INTO case_tasks (case_run_id, task_id, label, completed, updated_at)
+                VALUES (?, ?, ?, 0, ?)
+                """,
+                (run_id, task["task_id"], task["label"], now),
+            )
+    return case_run_detail(run_id, db_path)
+
+
+def tick_case_run(case_run_id: int, db_path: Path = LIVE_DB) -> dict[str, object]:
+    row = _load_case_run(case_run_id, db_path)
+    if row is None:
+        raise ValueError(f"Unknown case run: {case_run_id}")
+    if row["status"] == "Closed":
+        return case_run_detail(case_run_id, db_path)
+    case = _require_case(str(row["case_id"]))
+    run_key = str(row["run_key"])
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        state = connection.execute(
+            "SELECT next_index FROM run_state WHERE scenario_id = ?",
+            (run_key,),
+        ).fetchone()
+        next_index = int(state[0]) if state else 0
+        if next_index >= len(case.events):
+            return case_run_detail(case_run_id, db_path)
+        event = dict(case.events[next_index])
+        event["sequence"] = next_index + 1
+        event["emitted_at"] = _now()
+        event["case_run_id"] = case_run_id
+        event["case_id"] = case.case_id
+        connection.execute(
+            """
+            INSERT INTO events (scenario_id, sequence, emitted_at, payload)
+            VALUES (?, ?, ?, ?)
+            """,
+            (run_key, next_index + 1, event["emitted_at"], json.dumps(event)),
+        )
+        connection.execute(
+            """
+            INSERT INTO run_state (scenario_id, next_index, started_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(scenario_id) DO UPDATE SET
+              next_index = excluded.next_index,
+              updated_at = excluded.updated_at
+            """,
+            (run_key, next_index + 1, row["started_at"], _now()),
+        )
+    _evaluate_and_store_case_incident(case, case_run_id, db_path)
+    return case_run_detail(case_run_id, db_path)
+
+
+def case_run_detail(case_run_id: int, db_path: Path = LIVE_DB) -> dict[str, object]:
+    row = _load_case_run(case_run_id, db_path)
+    if row is None:
+        raise ValueError(f"Unknown case run: {case_run_id}")
+    case = _require_case(str(row["case_id"]))
+    run_key = str(row["run_key"])
+    events = _load_events(run_key, db_path)
+    incident = _load_incident(run_key, db_path)
+    evaluation = evaluate_case_detection(case, events)
+    tasks = _load_case_tasks(case_run_id, db_path)
+    return {
+        "run": row,
+        "case": case_to_dict(case),
+        "events": events,
+        "event_count": len(events),
+        "complete": len(events) >= len(case.events),
+        "next_event": len(events) + 1 if len(events) < len(case.events) else None,
+        "counts": _case_event_counts(events),
+        "incident": incident,
+        "entities": incident_entities(incident or {}, events),
+        "evaluation": evaluation,
+        "tasks": tasks,
+        "scope_warning": SCOPE_WARNING,
+    }
+
+
+def update_case_task(
+    case_run_id: int,
+    task_id: str,
+    completed: bool,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE case_tasks
+            SET completed = ?, updated_at = ?
+            WHERE case_run_id = ? AND task_id = ?
+            """,
+            (1 if completed else 0, _now(), case_run_id, task_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Unknown case task: {task_id}")
+    return case_run_detail(case_run_id, db_path)
+
+
+def close_case_run(
+    case_run_id: int,
+    decision: str,
+    note: str,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    clean_decision = decision.strip() or "Closed"
+    if clean_decision not in {"Benign", "Suspicious", "Escalated", "Closed"}:
+        raise ValueError(f"Invalid case decision: {clean_decision}")
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE case_runs
+            SET status = 'Closed', decision = ?, decision_note = ?, closed_at = ?
+            WHERE id = ?
+            """,
+            (clean_decision, note.strip(), _now(), case_run_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Unknown case run: {case_run_id}")
+    detail = case_run_detail(case_run_id, db_path)
+    incident = detail["incident"]
+    if incident:
+        update_incident_action(int(incident["id"]), clean_decision, note, db_path)
+        detail = case_run_detail(case_run_id, db_path)
+    return detail
+
+
+def evaluate_case_detection(
+    case: SocCase,
+    events: list[dict[str, object]],
+) -> dict[str, object]:
+    if case.primary_detection == "SENT-006":
+        return _evaluate_sent_006(events)
+    return {
+        "status": "Observing",
+        "reason": "No local evaluator is implemented for this case.",
+        "matched_fields": [],
+        "matched_entities": {},
+    }
+
+
+def case_evidence_markdown(case_run_id: int, db_path: Path = LIVE_DB) -> str:
+    detail = case_run_detail(case_run_id, db_path)
+    run = detail["run"]
+    case = detail["case"]
+    evaluation = detail["evaluation"]
+    lines = [
+        f"# Case evidence: {case['case_id']} run {run['id']}",
+        "",
+        f"- Title: {case['title']}",
+        f"- Status: {run['status']}",
+        f"- Decision: {run['decision'] or '-'}",
+        f"- Primary detection: {case['primary_detection']}",
+        f"- Observed status: {evaluation.get('status', 'Unknown')}",
+        "",
+        "## Event counts",
+        "",
+    ]
+    for key, value in detail["counts"].items():
+        lines.append(f"- {key}: {value}")
+    lines.extend(["", "## Timeline", ""])
+    for event in detail["events"]:
+        lines.append(
+            "- "
+            f"t+{event['offset']}s [{event.get('classification', '-')}] "
+            f"{event['table']} {event['account']} {event['ip']} "
+            f"{event['result']} - {event['detail']}"
+        )
+    lines.extend(["", "## Analyst tasks", ""])
+    for task in detail["tasks"]:
+        status = "done" if task["completed"] else "open"
+        lines.append(f"- [{status}] {task['label']}")
+    if detail["incident"]:
+        incident = detail["incident"]
+        lines.extend(["", "## Incident", ""])
+        lines.append(f"- ID: {incident['id']}")
+        lines.append(f"- Status: {incident['status']}")
+        lines.append(f"- Reason: {incident['reason']}")
+    if run["decision_note"]:
+        lines.extend(["", "## Decision note", "", str(run["decision_note"])])
+    lines.extend(["", "## Scope", "", SCOPE_WARNING, ""])
+    return "\n".join(lines)
 
 
 def evaluate_detection(
@@ -594,7 +1038,8 @@ def incident_evidence_markdown(
     detail = incident_detail(incident_id, db_path)
     if detail is None:
         raise ValueError(f"Unknown incident: {incident_id}")
-    scenario = _require_scenario(str(detail["incident"]["scenario_id"]))
+    scenario_id = str(detail["incident"]["scenario_id"])
+    scenario = get_scenario(scenario_id)
     state = {
         "events": detail["events"],
         "incident": detail["incident"],
@@ -602,7 +1047,28 @@ def incident_evidence_markdown(
         "analyst_notes": detail["notes"],
     }
     lines = [f"# Incident evidence: {incident_id}", ""]
-    lines.append(evidence_markdown(scenario, state))
+    if scenario is not None:
+        lines.append(evidence_markdown(scenario, state))
+    else:
+        source = detail["scenario"]
+        lines.extend(
+            [
+                f"## Source: {source['scenario_id']}",
+                "",
+                f"- Title: {source['title']}",
+                f"- Primary detection: {source['primary_detection']}",
+                f"- Observed status: {detail['evaluation'].get('status', 'Unknown')}",
+                "",
+                "## Events",
+                "",
+            ]
+        )
+        for event in detail["events"]:
+            lines.append(
+                "- "
+                f"t+{event['offset']}s {event['table']} {event['account']} "
+                f"{event['ip']} {event['result']} - {event['detail']}"
+            )
     lines.extend(["", "## Entities", ""])
     for group, values in detail["entities"].items():
         value = ", ".join(values) if values else "-"
@@ -628,6 +1094,39 @@ def _evaluate_and_store_incident(scenario: LiveScenario, db_path: Path) -> None:
                 scenario.scenario_id,
                 scenario.primary_detection,
                 scenario.severity,
+                "New",
+                matched.get("account", "-"),
+                matched.get("ip", "-"),
+                matched.get("host", "-"),
+                str(evaluation["reason"]),
+                _now(),
+            ),
+        )
+
+
+def _evaluate_and_store_case_incident(
+    case: SocCase,
+    case_run_id: int,
+    db_path: Path,
+) -> None:
+    detail = case_run_detail(case_run_id, db_path)
+    evaluation = detail["evaluation"]
+    if evaluation["status"] != "Alert" or detail["incident"]:
+        return
+    matched = evaluation.get("matched_entities", {})
+    run_key = str(detail["run"]["run_key"])
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO incidents (
+              scenario_id, detection, severity, status, account, ip, host, reason, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_key,
+                case.primary_detection,
+                case.severity,
                 "New",
                 matched.get("account", "-"),
                 matched.get("ip", "-"),
@@ -858,11 +1357,101 @@ def _load_notes(incident_id: int, db_path: Path) -> list[dict[str, object]]:
     ]
 
 
+def _load_case_run(case_run_id: int, db_path: Path) -> dict[str, object] | None:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, case_id, run_key, status, decision, decision_note, started_at, closed_at
+            FROM case_runs
+            WHERE id = ?
+            """,
+            (case_run_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "case_id": row[1],
+        "run_key": row[2],
+        "status": row[3],
+        "decision": row[4],
+        "decision_note": row[5],
+        "started_at": row[6],
+        "closed_at": row[7],
+    }
+
+
+def _load_case_run_by_key(run_key: str, db_path: Path) -> dict[str, object] | None:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, case_id, run_key, status, decision, decision_note, started_at, closed_at
+            FROM case_runs
+            WHERE run_key = ?
+            """,
+            (run_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "case_id": row[1],
+        "run_key": row[2],
+        "status": row[3],
+        "decision": row[4],
+        "decision_note": row[5],
+        "started_at": row[6],
+        "closed_at": row[7],
+    }
+
+
+def _load_case_tasks(case_run_id: int, db_path: Path) -> list[dict[str, object]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT task_id, label, completed, updated_at
+            FROM case_tasks
+            WHERE case_run_id = ?
+            ORDER BY id
+            """,
+            (case_run_id,),
+        ).fetchall()
+    return [
+        {
+            "task_id": row[0],
+            "label": row[1],
+            "completed": bool(row[2]),
+            "updated_at": row[3],
+        }
+        for row in rows
+    ]
+
+
+def _case_event_counts(events: list[dict[str, object]]) -> dict[str, int]:
+    return {
+        "total": len(events),
+        "benign": sum(1 for event in events if event.get("classification") == "benign"),
+        "signal": sum(1 for event in events if event.get("classification") == "signal"),
+        "high": sum(1 for event in events if event.get("severity") == "High"),
+        "medium": sum(1 for event in events if event.get("severity") == "Medium"),
+        "low": sum(1 for event in events if event.get("severity") == "Low"),
+    }
+
+
 def _require_scenario(scenario_id: str) -> LiveScenario:
     scenario = get_scenario(scenario_id)
     if scenario is None:
         raise ValueError(f"Unknown scenario: {scenario_id}")
     return scenario
+
+
+def _require_case(case_id: str) -> SocCase:
+    case = get_case(case_id)
+    if case is None:
+        raise ValueError(f"Unknown case: {case_id}")
+    return case
 
 
 def _now() -> str:
@@ -915,7 +1504,7 @@ def _render_workbench_app() -> str:
     h2 { font-size: 1.15rem; }
     h3 { font-size: 1rem; margin-top: 12px; }
     p { margin: 8px 0 0; color: var(--muted); }
-    button, select {
+    button, select, input {
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 9px 11px;
@@ -952,7 +1541,7 @@ def _render_workbench_app() -> str:
     }
     .cards {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 10px;
     }
     .metric {
@@ -1028,6 +1617,7 @@ def _render_workbench_app() -> str:
       padding-bottom: 8px;
     }
     .note-form { display: grid; gap: 8px; margin-top: 12px; }
+    .filters { display: grid; gap: 8px; margin-top: 10px; }
     @media (max-width: 1100px) {
       .workbench, .cards { grid-template-columns: 1fr; }
     }
@@ -1056,16 +1646,45 @@ def _render_workbench_app() -> str:
       <button id="export-json">Export JSON</button>
       <button id="export-md">Export MD</button>
     </section>
+    <section class="toolbar">
+      <strong>Case run</strong>
+      <select id="case-select"></select>
+      <button id="case-start" class="primary">Start Case run</button>
+      <button id="case-tick">Next case event</button>
+      <button id="case-export-json">Export case JSON</button>
+      <button id="case-export-md">Export case MD</button>
+      <span id="case-status">No active case.</span>
+    </section>
     <section class="cards">
       <div class="metric"><span>Detection</span><strong id="detection">-</strong></div>
       <div class="metric"><span>Severity</span><strong id="severity">-</strong></div>
       <div class="metric"><span>Expected</span><strong id="expected">-</strong></div>
       <div class="metric"><span>Runtime</span><strong id="status">Ready</strong></div>
+      <div class="metric"><span>Benign events</span><strong id="benign-count">0</strong></div>
+      <div class="metric"><span>Signal events</span><strong id="signal-count">0</strong></div>
     </section>
     <section class="workbench">
       <div class="panel">
         <h2>Incident queue</h2>
         <p id="queue-summary">No incidents yet.</p>
+        <div class="filters">
+          <select id="filter-status">
+            <option value="">All statuses</option>
+            <option>New</option>
+            <option>Investigating</option>
+            <option>Benign</option>
+            <option>Suspicious</option>
+            <option>Escalated</option>
+            <option>Closed</option>
+          </select>
+          <select id="filter-severity">
+            <option value="">All severities</option>
+            <option>High</option>
+            <option>Medium</option>
+            <option>Low</option>
+          </select>
+          <input id="filter-entity" placeholder="Filter by account, IP or host">
+        </div>
         <div id="incident-queue" class="queue"></div>
       </div>
       <div class="panel">
@@ -1104,6 +1723,18 @@ def _render_workbench_app() -> str:
           <p id="note-status"></p>
           <h3>Notes</h3>
           <div id="notes" class="kv"></div>
+          <h3>Analyst tasks</h3>
+          <div id="case-tasks" class="kv"></div>
+          <h3>Close case</h3>
+          <select id="case-decision">
+            <option>Suspicious</option>
+            <option>Escalated</option>
+            <option>Benign</option>
+            <option>Closed</option>
+          </select>
+          <textarea id="case-note" placeholder="Case decision note"></textarea>
+          <button id="case-close">Close case</button>
+          <p id="case-note-status"></p>
         </div>
       </div>
     </section>
@@ -1114,7 +1745,10 @@ def _render_workbench_app() -> str:
       scenario: null,
       timer: null,
       incident: null,
-      selectedIncidentId: null
+      selectedIncidentId: null,
+      cases: [],
+      activeCaseRun: null,
+      incidents: []
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1132,7 +1766,53 @@ def _render_workbench_app() -> str:
         })
         .join('');
       await loadScenario(state.scenarios[0].scenario_id);
+      await loadCases();
       await loadIncidents();
+    }
+
+    async function loadCases() {
+      const response = await fetch('/api/cases');
+      const payload = await response.json();
+      state.cases = payload.cases;
+      $('case-select').innerHTML = state.cases.map((item) =>
+        `<option value="${h(item.case_id)}">${h(item.case_id)} - ${h(item.title)}</option>`
+      ).join('');
+      if (payload.runs.length && !state.activeCaseRun) {
+        await loadCaseRun(payload.runs[0].id);
+      }
+    }
+
+    async function startCaseRun() {
+      pause();
+      const response = await fetch('/api/cases/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({case_id: $('case-select').value || 'CASE-001'})
+      });
+      const payload = await response.json();
+      renderCaseRun(payload);
+      await loadIncidents(payload.incident ? payload.incident.id : null);
+    }
+
+    async function loadCaseRun(id) {
+      const response = await fetch(`/api/cases/${id}`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      renderCaseRun(payload);
+      await loadIncidents(payload.incident ? payload.incident.id : null);
+    }
+
+    async function tickCaseRun() {
+      if (!state.activeCaseRun) {
+        await startCaseRun();
+        return;
+      }
+      const response = await fetch(`/api/cases/${state.activeCaseRun.run.id}/tick`, {
+        method: 'POST'
+      });
+      const payload = await response.json();
+      renderCaseRun(payload);
+      await loadIncidents(payload.incident ? payload.incident.id : null);
     }
 
     async function loadScenario(id) {
@@ -1166,10 +1846,15 @@ def _render_workbench_app() -> str:
       await fetch('/api/runtime/reset', { method: 'POST' });
       state.selectedIncidentId = null;
       state.incident = null;
+      state.activeCaseRun = null;
+      $('case-status').textContent = 'No active case.';
+      $('case-tasks').innerHTML = '';
+      $('case-note-status').textContent = '';
       await loadIncidents();
       if (state.scenario) {
         await reset();
       }
+      await loadCases();
     }
 
     function start() {
@@ -1203,10 +1888,20 @@ def _render_workbench_app() -> str:
     async function loadIncidents(preferredId = null) {
       const response = await fetch('/api/incidents');
       const incidents = await response.json();
-      $('queue-summary').textContent = incidents.length
-        ? `${incidents.length} incident(s) in local queue.`
+      state.incidents = incidents;
+      const statusFilter = $('filter-status').value;
+      const severityFilter = $('filter-severity').value;
+      const entityFilter = $('filter-entity').value.toLowerCase();
+      const filtered = incidents.filter((incident) => {
+        const entity = `${incident.account} ${incident.ip} ${incident.host}`.toLowerCase();
+        return (!statusFilter || incident.status === statusFilter)
+          && (!severityFilter || incident.severity === severityFilter)
+          && (!entityFilter || entity.includes(entityFilter));
+      });
+      $('queue-summary').textContent = filtered.length
+        ? `${filtered.length} incident(s) in local queue.`
         : 'No incidents yet.';
-      $('incident-queue').innerHTML = incidents.map((incident) => {
+      $('incident-queue').innerHTML = filtered.map((incident) => {
         const selected = incident.id === state.selectedIncidentId ? 'selected' : '';
         return `
         <button data-incident="${incident.id}" class="${selected}">
@@ -1219,7 +1914,7 @@ def _render_workbench_app() -> str:
       document.querySelectorAll('[data-incident]').forEach((button) => {
         button.addEventListener('click', () => selectIncident(Number(button.dataset.incident)));
       });
-      const targetId = preferredId || state.selectedIncidentId || (incidents[0] && incidents[0].id);
+      const targetId = preferredId || state.selectedIncidentId || (filtered[0] && filtered[0].id);
       if (targetId) {
         await selectIncident(Number(targetId), false);
       }
@@ -1244,6 +1939,7 @@ def _render_workbench_app() -> str:
       renderTimeline(payload.events, payload.incident);
       renderEntities({});
       renderNotes(payload.analyst_notes || []);
+      renderCounts(payload.counts || {});
       if (payload.incident) {
         state.selectedIncidentId = payload.incident.id;
         $('status').textContent = 'Alert';
@@ -1265,7 +1961,29 @@ def _render_workbench_app() -> str:
       renderTimeline(detail.events, detail.incident);
       renderEntities(detail.entities);
       renderNotes(detail.notes);
+      renderCounts({});
       $('status').textContent = detail.incident.status;
+    }
+
+    function renderCaseRun(payload) {
+      state.activeCaseRun = payload;
+      state.incident = payload.incident;
+      if (payload.incident) state.selectedIncidentId = payload.incident.id;
+      $('summary').textContent = `${payload.case.case_id}: ${payload.case.summary}`;
+      $('detection').textContent = payload.case.primary_detection;
+      $('severity').textContent = payload.case.severity;
+      $('expected').textContent = 'Alert';
+      $('status').textContent = payload.run.status;
+      const caseProgress = `${payload.event_count}/${payload.case.event_total} events`;
+      $('case-status').textContent =
+        `${payload.case.case_id} run ${payload.run.id} | ${caseProgress} | ${payload.run.status}`;
+      renderEvents(payload.events);
+      renderEvaluation(payload.evaluation);
+      renderTimeline(payload.events, payload.incident);
+      renderEntities(payload.entities || {});
+      renderCounts(payload.counts || {});
+      renderCaseTasks(payload.tasks || []);
+      renderNotes([]);
     }
 
     function renderEvents(events) {
@@ -1276,7 +1994,10 @@ def _render_workbench_app() -> str:
           <td>${h(event.account)}</td>
           <td>${h(event.ip)}</td>
           <td>${h(event.host)}</td>
-          <td>${h(event.result)}</td>
+          <td>
+            ${h(event.result)}<br>
+            <small>${h(event.severity || '')} ${h(event.classification || '')}</small>
+          </td>
           <td>${h(event.detail)}</td>
         </tr>
       `).join('');
@@ -1322,6 +2043,42 @@ def _render_workbench_app() -> str:
       `).join('') : '<div>No notes yet.</div>';
     }
 
+    function renderCounts(counts) {
+      $('benign-count').textContent = counts.benign || 0;
+      $('signal-count').textContent = counts.signal || 0;
+    }
+
+    function renderCaseTasks(tasks) {
+      $('case-tasks').innerHTML = tasks.length ? tasks.map((task) => `
+        <div>
+          <label>
+            <input
+              type="checkbox"
+              data-task="${h(task.task_id)}"
+              ${task.completed ? 'checked' : ''}
+            >
+            ${h(task.label)}
+          </label>
+        </div>
+      `).join('') : '<div>No active case tasks.</div>';
+      document.querySelectorAll('[data-task]').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => updateCaseTask(
+          checkbox.dataset.task,
+          checkbox.checked
+        ));
+      });
+    }
+
+    async function updateCaseTask(taskId, completed) {
+      if (!state.activeCaseRun) return;
+      const response = await fetch(`/api/cases/${state.activeCaseRun.run.id}/task`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({task_id: taskId, completed})
+      });
+      renderCaseRun(await response.json());
+    }
+
     async function exportEvidence(format) {
       const suffix = state.selectedIncidentId
         ? `incident=${state.selectedIncidentId}&format=${format}`
@@ -1337,6 +2094,41 @@ def _render_workbench_app() -> str:
       link.download = `${id}-live-evidence.${format}`;
       link.click();
       URL.revokeObjectURL(url);
+    }
+
+    async function exportCaseEvidence(format) {
+      if (!state.activeCaseRun) {
+        $('case-note-status').textContent = 'Start a case run first.';
+        return;
+      }
+      const id = state.activeCaseRun.run.id;
+      const response = await fetch(`/api/evidence?case=${id}&format=${format}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `case-${id}-evidence.${format}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function closeCase() {
+      if (!state.activeCaseRun) {
+        $('case-note-status').textContent = 'Start a case run first.';
+        return;
+      }
+      const response = await fetch(`/api/cases/${state.activeCaseRun.run.id}/close`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          decision: $('case-decision').value,
+          note: $('case-note').value
+        })
+      });
+      const payload = await response.json();
+      renderCaseRun(payload);
+      $('case-note-status').textContent = `Closed: ${payload.run.decision}`;
+      await loadIncidents(payload.incident ? payload.incident.id : null);
     }
 
     async function saveNote() {
@@ -1363,6 +2155,14 @@ def _render_workbench_app() -> str:
     $('pause').addEventListener('click', pause);
     $('reset').addEventListener('click', reset);
     $('reset-runtime').addEventListener('click', resetRuntime);
+    $('filter-status').addEventListener('change', () => loadIncidents());
+    $('filter-severity').addEventListener('change', () => loadIncidents());
+    $('filter-entity').addEventListener('input', () => loadIncidents());
+    $('case-start').addEventListener('click', startCaseRun);
+    $('case-tick').addEventListener('click', tickCaseRun);
+    $('case-export-json').addEventListener('click', () => exportCaseEvidence('json'));
+    $('case-export-md').addEventListener('click', () => exportCaseEvidence('md'));
+    $('case-close').addEventListener('click', closeCase);
     $('export-json').addEventListener('click', () => exportEvidence('json'));
     $('export-md').addEventListener('click', () => exportEvidence('md'));
     $('save-note').addEventListener('click', saveNote);
@@ -1408,6 +2208,16 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
             scenario_id = params.get("scenario", ["SENT-006-POS"])[0]
             self._send_json(live_state(scenario_id))
             return
+        if parsed.path == "/api/cases":
+            self._send_json(case_index())
+            return
+        if parsed.path.startswith("/api/cases/"):
+            case_run_id = parsed.path.strip("/").split("/")[2]
+            try:
+                self._send_json(case_run_detail(int(case_run_id)))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=404)
+            return
         if parsed.path == "/api/incidents":
             self._send_json(incident_queue())
             return
@@ -1426,8 +2236,24 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/evidence":
             params = parse_qs(parsed.query)
             incident_param = params.get("incident", [None])[0]
+            case_param = params.get("case", [None])[0]
             scenario_id = params.get("scenario", ["SENT-006-POS"])[0]
             output_format = params.get("format", ["json"])[0]
+            if case_param is not None:
+                try:
+                    case_run_id = int(case_param)
+                    detail = case_run_detail(case_run_id)
+                    if output_format == "md":
+                        self._send_text(
+                            case_evidence_markdown(case_run_id),
+                            "text/markdown; charset=utf-8",
+                        )
+                        return
+                    self._send_json(detail)
+                    return
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=404)
+                    return
             if incident_param is not None:
                 try:
                     incident_id = int(incident_param)
@@ -1473,6 +2299,36 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/tick":
                 self._send_json(tick_run(scenario_id))
+                return
+            if parsed.path == "/api/cases/start":
+                payload = self._read_json_body()
+                self._send_json(start_case_run(str(payload.get("case_id", "CASE-001"))))
+                return
+            if parsed.path.startswith("/api/cases/") and parsed.path.endswith("/tick"):
+                parts = parsed.path.strip("/").split("/")
+                self._send_json(tick_case_run(int(parts[2])))
+                return
+            if parsed.path.startswith("/api/cases/") and parsed.path.endswith("/task"):
+                parts = parsed.path.strip("/").split("/")
+                payload = self._read_json_body()
+                self._send_json(
+                    update_case_task(
+                        int(parts[2]),
+                        str(payload.get("task_id", "")),
+                        bool(payload.get("completed", True)),
+                    )
+                )
+                return
+            if parsed.path.startswith("/api/cases/") and parsed.path.endswith("/close"):
+                parts = parsed.path.strip("/").split("/")
+                payload = self._read_json_body()
+                self._send_json(
+                    close_case_run(
+                        int(parts[2]),
+                        str(payload.get("decision", "Closed")),
+                        str(payload.get("note", "")),
+                    )
+                )
                 return
             if parsed.path.startswith("/api/incidents/") and parsed.path.endswith(
                 "/analyst-action"
