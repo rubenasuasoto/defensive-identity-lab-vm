@@ -129,7 +129,7 @@ def render_site(config: HubConfig) -> str:
     }}
     .links {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 8px;
       margin-top: auto;
     }}
@@ -214,6 +214,18 @@ def render_site(config: HubConfig) -> str:
       <ol class="journey">
         {journey}
       </ol>
+    </section>
+    <section class="panel">
+      <h2>Live Lab</h2>
+      <p>
+        Start the dynamic replay experience with
+        <code>uv run identitylab live</code>, then open the local
+        Identity Detection Live Lab.
+      </p>
+      <p>
+        Recommended scenario: <strong>SENT-006-POS</strong>, the cross-source
+        identity incident that correlates Entra and Windows signals.
+      </p>
     </section>
     <section class="panel">
       <h2>Local VM preparation</h2>

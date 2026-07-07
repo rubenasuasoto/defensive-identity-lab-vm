@@ -46,6 +46,7 @@ uv run identitylab build-site
 uv run identitylab verify
 uv run identitylab all
 uv run identitylab vm-check
+uv run identitylab live
 ```
 
 Open:
@@ -69,4 +70,21 @@ Local VM helper commands:
 .\scripts\run-all-labs.ps1
 .\scripts\vm-evidence.ps1
 .\scripts\start-local-hub.ps1
+.\scripts\start-live-lab.ps1
 ```
+
+## Live Lab
+
+Start the dynamic local replay environment:
+
+```powershell
+.\scripts\start-live-lab.ps1
+```
+
+Open:
+
+```text
+http://127.0.0.1:8090/
+```
+
+See [`docs/LIVE_LAB.md`](docs/LIVE_LAB.md).

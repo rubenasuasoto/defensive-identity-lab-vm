@@ -13,6 +13,8 @@ def test_build_site_generates_index(tmp_path: Path) -> None:
     assert "Microsoft Entra Detection Lab" in html
     assert "Microsoft Sentinel KQL Detection Lab" in html
     assert "https://2dam-7.gitbook.io/defensive-lab/" in html
+    assert "Live Lab" in html
+    assert "uv run identitylab live" in html
     assert "releases/tag/v0.1.0" in html
     assert "SENT-006-POS" in html
 

@@ -5,6 +5,7 @@ import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from identitylab.live import serve_live
 from identitylab.paths import SITE_DIR
 from identitylab.site import build_site
 from identitylab.verify import checks_passed, verify_urls
@@ -38,6 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser = subparsers.add_parser("serve", help="Serve the static hub locally.")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8088)
+    live_parser = subparsers.add_parser("live", help="Serve the dynamic live lab locally.")
+    live_parser.add_argument("--host", default="127.0.0.1")
+    live_parser.add_argument("--port", type=int, default=8090)
     args = parser.parse_args(argv)
 
     if args.command == "build-site":
@@ -68,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
         output = build_site()
         print(f"Built {output}")
         return _serve(args.host, args.port)
+
+    if args.command == "live":
+        return serve_live(args.host, args.port)
 
     parser.error(f"Unknown command: {args.command}")
     return 2

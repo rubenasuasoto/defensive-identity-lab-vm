@@ -65,3 +65,15 @@ def test_vm_check_command_reports_readiness(monkeypatch, capsys) -> None:
 
     assert cli.main(["vm-check"]) == 0
     assert "Identity lab VM readiness" in capsys.readouterr().out
+
+
+def test_live_command_starts_live_server(monkeypatch) -> None:
+    calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        cli,
+        "serve_live",
+        lambda host, port: calls.append((host, port)) or 0,
+    )
+
+    assert cli.main(["live", "--host", "127.0.0.1", "--port", "8099"]) == 0
+    assert calls == [("127.0.0.1", 8099)]
