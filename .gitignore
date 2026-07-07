@@ -8,5 +8,6 @@ build/
 .coverage
 htmlcov/
 evidence/
+runtime/
 live_lab.sqlite
 *.sqlite-journal

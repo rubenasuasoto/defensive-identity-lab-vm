@@ -58,6 +58,44 @@ Open:
 http://127.0.0.1:8088/
 ```
 
+Start the dynamic Live Lab:
+
+```powershell
+.\scripts\start-live-lab.ps1
+```
+
+Open:
+
+```text
+http://127.0.0.1:8090/
+```
+
+## Persistent Live Lab startup
+
+On the dedicated lab computer, install the local Scheduled Task:
+
+```powershell
+.\scripts\install-live-lab-task.ps1
+```
+
+This starts `identitylab live --host 127.0.0.1 --port 8090` when the user signs in and writes local logs under:
+
+```text
+runtime/logs/
+```
+
+Open the Workbench:
+
+```powershell
+.\scripts\open-live-lab.ps1
+```
+
+Remove the Scheduled Task:
+
+```powershell
+.\scripts\uninstall-live-lab-task.ps1
+```
+
 ## Scope
 
 This setup uses synthetic data only. It does not connect to production tenants, ingest real logs, store credentials, run payloads or modify Windows security settings.

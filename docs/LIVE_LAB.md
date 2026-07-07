@@ -4,7 +4,7 @@ The live lab is a local synthetic detection environment for defensive identity r
 
 It does not connect to Azure, Microsoft Graph, Microsoft Sentinel, production Windows hosts, tenants, credentials, tokens or real logs.
 
-Events are emitted into a local SQLite store, evaluated by a local detection engine and converted into synthetic incidents when the rule conditions are met.
+Events are emitted into a local SQLite store, evaluated by a local detection engine and converted into synthetic incidents when the rule conditions are met. The Analyst Workbench keeps incidents, entities, status changes and notes between browser reloads.
 
 ## Start
 
@@ -30,9 +30,27 @@ http://127.0.0.1:8090/
 2. Click `Start`.
 3. Watch the event stream populate.
 4. Review the rule evaluation panel as the engine waits for enough evidence.
-5. Review the incident timeline when the alert fires.
-6. Add an analyst status and note.
-7. Export JSON or Markdown evidence.
+5. Select the generated item in `Incident queue`.
+6. Review `Incident detail`, `Entities` and `Rule evaluation`.
+7. Set an analyst status such as `Investigating`, `Suspicious` or `Closed`.
+8. Add an analyst note.
+9. Export JSON or Markdown evidence for the selected incident.
+
+## Analyst Workbench
+
+The Workbench is intentionally local and synthetic, but it behaves like a small analyst console:
+
+- `Incident queue`: all generated incidents in the local SQLite runtime store.
+- `Incident detail`: timeline, related synthetic events and alert reason.
+- `Entities`: accounts, IPs, hosts, sources and tables seen in the incident.
+- `Rule evaluation`: why the local evaluator alerted and which fields matched.
+- `Analyst action`: persistent status and notes.
+
+Allowed statuses:
+
+```text
+New, Investigating, Benign, Suspicious, Escalated, Closed
+```
 
 ## Local state
 
@@ -43,6 +61,34 @@ live_lab.sqlite
 ```
 
 The database stores synthetic events, incidents and analyst notes. It is ignored by Git and can be deleted when you want a clean local runtime state.
+
+Use `Reset scenario` to clear the active scenario. Use `Reset runtime state` to clear all local synthetic events, incidents and notes from the Workbench.
+
+## Persistent startup on Windows
+
+Install a Scheduled Task that starts the Live Lab when the lab user signs in:
+
+```powershell
+.\scripts\install-live-lab-task.ps1
+```
+
+Open the Workbench:
+
+```powershell
+.\scripts\open-live-lab.ps1
+```
+
+Uninstall the task:
+
+```powershell
+.\scripts\uninstall-live-lab-task.ps1
+```
+
+Task logs are local and ignored by Git:
+
+```text
+runtime/logs/live-lab.log
+```
 
 ## Scope
 

@@ -14,6 +14,14 @@ SCOPE_WARNING = (
     "Synthetic lab only. No production logs, credentials, tenants, tokens, malware, "
     "offensive simulations or host-changing actions."
 )
+ALLOWED_INCIDENT_STATUSES = {
+    "New",
+    "Investigating",
+    "Benign",
+    "Suspicious",
+    "Escalated",
+    "Closed",
+}
 
 
 @dataclass(frozen=True)
@@ -290,6 +298,15 @@ def reset_run(scenario_id: str, db_path: Path = LIVE_DB) -> dict[str, object]:
     init_store(db_path)
     now = _now()
     with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            DELETE FROM analyst_notes
+            WHERE incident_id IN (
+              SELECT id FROM incidents WHERE scenario_id = ?
+            )
+            """,
+            (scenario_id,),
+        )
         connection.execute("DELETE FROM events WHERE scenario_id = ?", (scenario_id,))
         connection.execute("DELETE FROM incidents WHERE scenario_id = ?", (scenario_id,))
         connection.execute(
@@ -365,21 +382,142 @@ def add_analyst_note(
     note: str,
     db_path: Path = LIVE_DB,
 ) -> dict[str, object]:
-    clean_status = status.strip() or "Investigating"
-    clean_note = note.strip() or "No analyst note provided."
+    detail = update_incident_action(incident_id, status, note, db_path)
+    return {"incident_id": incident_id, "status": detail["status"], "note": note.strip()}
+
+
+def incident_queue(db_path: Path = LIVE_DB) -> list[dict[str, object]]:
+    init_store(db_path)
     with sqlite3.connect(db_path) as connection:
-        connection.execute(
+        rows = connection.execute(
             """
-            INSERT INTO analyst_notes (incident_id, status, note, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (incident_id, clean_status, clean_note, _now()),
-        )
+            SELECT
+              i.id, i.scenario_id, i.detection, i.severity, i.status, i.account, i.ip,
+              i.host, i.reason, i.created_at,
+              COUNT(DISTINCT e.id) AS event_count,
+              COUNT(DISTINCT n.id) AS note_count
+            FROM incidents i
+            LEFT JOIN events e ON e.scenario_id = i.scenario_id
+            LEFT JOIN analyst_notes n ON n.incident_id = i.id
+            GROUP BY
+              i.id, i.scenario_id, i.detection, i.severity, i.status, i.account, i.ip,
+              i.host, i.reason, i.created_at
+            ORDER BY i.id DESC
+            """
+        ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "scenario_id": row[1],
+            "detection": row[2],
+            "severity": row[3],
+            "status": row[4],
+            "account": row[5],
+            "ip": row[6],
+            "host": row[7],
+            "reason": row[8],
+            "created_at": row[9],
+            "event_count": row[10],
+            "note_count": row[11],
+        }
+        for row in rows
+    ]
+
+
+def incident_detail(incident_id: int, db_path: Path = LIVE_DB) -> dict[str, object] | None:
+    init_store(db_path)
+    incident = _load_incident_by_id(incident_id, db_path)
+    if incident is None:
+        return None
+    scenario = _require_scenario(str(incident["scenario_id"]))
+    events = _load_events(scenario.scenario_id, db_path)
+    evaluation = evaluate_detection(scenario, events)
+    return {
+        "incident": incident,
+        "scenario": scenario_to_dict(scenario),
+        "events": events,
+        "entities": incident_entities(incident, events),
+        "evaluation": evaluation,
+        "notes": _load_notes(incident_id, db_path),
+        "scope_warning": SCOPE_WARNING,
+    }
+
+
+def incident_entities(
+    incident: dict[str, object],
+    events: list[dict[str, object]],
+) -> dict[str, list[str]]:
+    def unique(field: str) -> list[str]:
+        values = {
+            str(event.get(field, "-"))
+            for event in events
+            if str(event.get(field, "-")) != "-"
+        }
+        return sorted(values)
+
+    account = str(incident.get("account", "-"))
+    ip = str(incident.get("ip", "-"))
+    host = str(incident.get("host", "-"))
+    return {
+        "accounts": sorted({account, *unique("account")} - {"-"}),
+        "ips": sorted({ip, *unique("ip")} - {"-"}),
+        "hosts": sorted({host, *unique("host")} - {"-"}),
+        "sources": unique("source"),
+        "tables": unique("table"),
+    }
+
+
+def update_incident_action(
+    incident_id: int,
+    status: str,
+    note: str,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    clean_status = status.strip() or "Investigating"
+    if clean_status not in ALLOWED_INCIDENT_STATUSES:
+        allowed = ", ".join(sorted(ALLOWED_INCIDENT_STATUSES))
+        raise ValueError(f"Invalid incident status: {clean_status}. Allowed: {allowed}")
+    clean_note = note.strip()
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT id FROM incidents WHERE id = ?",
+            (incident_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown incident: {incident_id}")
         connection.execute(
             "UPDATE incidents SET status = ? WHERE id = ?",
             (clean_status, incident_id),
         )
-    return {"incident_id": incident_id, "status": clean_status, "note": clean_note}
+        if clean_note:
+            connection.execute(
+                """
+                INSERT INTO analyst_notes (incident_id, status, note, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (incident_id, clean_status, clean_note, _now()),
+            )
+    detail = incident_detail(incident_id, db_path)
+    if detail is None:
+        raise ValueError(f"Unknown incident: {incident_id}")
+    return detail["incident"]
+
+
+def reset_runtime(db_path: Path = LIVE_DB) -> dict[str, object]:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        counts = {
+            "events": connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            "incidents": connection.execute("SELECT COUNT(*) FROM incidents").fetchone()[0],
+            "notes": connection.execute("SELECT COUNT(*) FROM analyst_notes").fetchone()[0],
+            "run_state": connection.execute("SELECT COUNT(*) FROM run_state").fetchone()[0],
+        }
+        connection.execute("DELETE FROM analyst_notes")
+        connection.execute("DELETE FROM incidents")
+        connection.execute("DELETE FROM events")
+        connection.execute("DELETE FROM run_state")
+    return {"reset": True, "deleted": counts, "scope_warning": SCOPE_WARNING}
 
 
 def evaluate_detection(
@@ -438,7 +576,37 @@ def evidence_markdown(
         lines.append(f"- Account: {incident['account']}")
         lines.append(f"- IP: {incident['ip']}")
         lines.append(f"- Host: {incident['host']}")
+        notes = state.get("analyst_notes") or []
+        if notes:
+            lines.extend(["", "## Analyst notes", ""])
+            for item in notes:
+                lines.append(
+                    f"- {item['created_at']} [{item['status']}]: {item['note']}"
+                )
     lines.extend(["", "## Scope", "", SCOPE_WARNING, ""])
+    return "\n".join(lines)
+
+
+def incident_evidence_markdown(
+    incident_id: int,
+    db_path: Path = LIVE_DB,
+) -> str:
+    detail = incident_detail(incident_id, db_path)
+    if detail is None:
+        raise ValueError(f"Unknown incident: {incident_id}")
+    scenario = _require_scenario(str(detail["incident"]["scenario_id"]))
+    state = {
+        "events": detail["events"],
+        "incident": detail["incident"],
+        "evaluation": detail["evaluation"],
+        "analyst_notes": detail["notes"],
+    }
+    lines = [f"# Incident evidence: {incident_id}", ""]
+    lines.append(evidence_markdown(scenario, state))
+    lines.extend(["", "## Entities", ""])
+    for group, values in detail["entities"].items():
+        value = ", ".join(values) if values else "-"
+        lines.append(f"- {group}: {value}")
     return "\n".join(lines)
 
 
@@ -619,7 +787,9 @@ def _load_incident(scenario_id: str, db_path: Path) -> dict[str, object] | None:
     with sqlite3.connect(db_path) as connection:
         row = connection.execute(
             """
-            SELECT id, detection, severity, status, account, ip, host, reason, created_at
+            SELECT
+              id, scenario_id, detection, severity, status, account, ip, host, reason,
+              created_at
             FROM incidents
             WHERE scenario_id = ?
             ORDER BY id DESC
@@ -631,14 +801,43 @@ def _load_incident(scenario_id: str, db_path: Path) -> dict[str, object] | None:
         return None
     return {
         "id": row[0],
-        "detection": row[1],
-        "severity": row[2],
-        "status": row[3],
-        "account": row[4],
-        "ip": row[5],
-        "host": row[6],
-        "reason": row[7],
-        "created_at": row[8],
+        "scenario_id": row[1],
+        "detection": row[2],
+        "severity": row[3],
+        "status": row[4],
+        "account": row[5],
+        "ip": row[6],
+        "host": row[7],
+        "reason": row[8],
+        "created_at": row[9],
+    }
+
+
+def _load_incident_by_id(incident_id: int, db_path: Path) -> dict[str, object] | None:
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+              id, scenario_id, detection, severity, status, account, ip, host, reason,
+              created_at
+            FROM incidents
+            WHERE id = ?
+            """,
+            (incident_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "scenario_id": row[1],
+        "detection": row[2],
+        "severity": row[3],
+        "status": row[4],
+        "account": row[5],
+        "ip": row[6],
+        "host": row[7],
+        "reason": row[8],
+        "created_at": row[9],
     }
 
 
@@ -671,14 +870,18 @@ def _now() -> str:
 
 
 def render_live_app() -> str:
-    return f"""<!doctype html>
+    return _render_workbench_app()
+
+
+def _render_workbench_app() -> str:
+    html = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Identity Detection Live Lab</title>
   <style>
-    :root {{
+    :root {
       --bg: #f3f6fb;
       --ink: #182233;
       --muted: #5b6778;
@@ -687,108 +890,111 @@ def render_live_app() -> str:
       --accent: #0d6efd;
       --alert: #b42318;
       --ok: #137333;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
+    }
+    * { box-sizing: border-box; }
+    body {
       margin: 0;
       font-family: Arial, Helvetica, sans-serif;
       background: var(--bg);
       color: var(--ink);
-    }}
-    header {{
+    }
+    header {
       background: #101828;
       color: white;
       padding: 24px;
-    }}
-    main {{
-      max-width: 1240px;
+    }
+    main {
+      max-width: 1420px;
       margin: 0 auto;
       padding: 20px;
       display: grid;
       gap: 16px;
-    }}
-    h1, h2, h3 {{ margin: 0; }}
-    h1 {{ font-size: 2rem; }}
-    h2 {{ font-size: 1.2rem; }}
-    p {{ margin: 8px 0 0; color: var(--muted); }}
-    button, select {{
+    }
+    h1, h2, h3 { margin: 0; }
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.15rem; }
+    h3 { font-size: 1rem; margin-top: 12px; }
+    p { margin: 8px 0 0; color: var(--muted); }
+    button, select {
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 9px 11px;
       background: white;
       color: var(--ink);
       font-weight: 700;
-    }}
-    button.primary {{ background: var(--accent); color: white; border-color: var(--accent); }}
-    .warning {{
-      border: 1px solid #e9c86a;
-      background: #fff6dd;
-      padding: 12px;
-      font-weight: 700;
-    }}
-    .toolbar, .panel {{
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 14px;
-    }}
-    .toolbar {{
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-    }}
-    input, textarea {{
+    }
+    button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+    textarea {
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 9px 11px;
       width: 100%;
+      min-height: 86px;
       font: inherit;
-    }}
-    textarea {{ min-height: 84px; }}
-    .grid {{
-      display: grid;
-      grid-template-columns: 1.35fr .65fr;
-      gap: 16px;
-    }}
-    .cards {{
+    }
+    .warning {
+      border: 1px solid #e9c86a;
+      background: #fff6dd;
+      padding: 12px;
+      font-weight: 700;
+    }
+    .toolbar, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .cards {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 10px;
-    }}
-    .metric {{
+    }
+    .metric {
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 12px;
       background: #f8fbff;
-    }}
-    .metric strong {{ display: block; font-size: 1.4rem; }}
-    table {{
+    }
+    .metric strong { display: block; font-size: 1.25rem; }
+    .workbench {
+      display: grid;
+      grid-template-columns: .85fr 1.55fr .8fr;
+      gap: 16px;
+      align-items: start;
+    }
+    table {
       width: 100%;
       border-collapse: collapse;
-      font-size: .92rem;
-    }}
-    th, td {{
+      font-size: .9rem;
+    }
+    th, td {
       border-bottom: 1px solid var(--line);
-      padding: 9px;
+      padding: 8px;
       text-align: left;
       vertical-align: top;
-    }}
-    th {{ color: var(--muted); }}
-    .timeline {{
-      list-style: none;
-      padding: 0;
-      margin: 0;
+    }
+    th { color: var(--muted); }
+    .queue {
       display: grid;
       gap: 8px;
-    }}
-    .timeline li {{
-      border-left: 4px solid var(--accent);
+      margin-top: 12px;
+    }
+    .queue button {
+      width: 100%;
+      text-align: left;
       background: #f8fbff;
-      padding: 10px;
-    }}
-    .timeline li.alert {{ border-left-color: var(--alert); }}
-    .pill {{
+    }
+    .queue button.selected {
+      border-color: var(--accent);
+      box-shadow: inset 4px 0 0 var(--accent);
+    }
+    .pill {
       display: inline-block;
       border-radius: 999px;
       padding: 2px 8px;
@@ -796,22 +1002,44 @@ def render_live_app() -> str:
       background: white;
       font-size: .82rem;
       font-weight: 700;
-    }}
-    .alert-text {{ color: var(--alert); font-weight: 700; }}
-    .ok-text {{ color: var(--ok); font-weight: 700; }}
-    .note-form {{ display: grid; gap: 8px; margin-top: 12px; }}
-    @media (max-width: 900px) {{
-      .grid, .cards {{ grid-template-columns: 1fr; }}
-    }}
+    }
+    .alert-text { color: var(--alert); font-weight: 700; }
+    .ok-text { color: var(--ok); font-weight: 700; }
+    .timeline {
+      list-style: none;
+      padding: 0;
+      margin: 10px 0 0;
+      display: grid;
+      gap: 8px;
+    }
+    .timeline li {
+      border-left: 4px solid var(--accent);
+      background: #f8fbff;
+      padding: 10px;
+    }
+    .timeline li.alert { border-left-color: var(--alert); }
+    .kv {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .kv div {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
+    }
+    .note-form { display: grid; gap: 8px; margin-top: 12px; }
+    @media (max-width: 1100px) {
+      .workbench, .cards { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <header>
     <h1>Identity Detection Live Lab</h1>
-    <p>Local synthetic replay for identity detection engineering.</p>
+    <p>Analyst Workbench for local synthetic identity incidents.</p>
   </header>
   <main>
-    <div class="warning">{SCOPE_WARNING}</div>
+    <div class="warning">__SCOPE_WARNING__</div>
     <section class="toolbar">
       <label for="scenario">Scenario</label>
       <select id="scenario"></select>
@@ -823,7 +1051,8 @@ def render_live_app() -> str:
       </select>
       <button id="start" class="primary">Start</button>
       <button id="pause">Pause</button>
-      <button id="reset">Reset</button>
+      <button id="reset">Reset scenario</button>
+      <button id="reset-runtime">Reset runtime state</button>
       <button id="export-json">Export JSON</button>
       <button id="export-md">Export MD</button>
     </section>
@@ -831,16 +1060,18 @@ def render_live_app() -> str:
       <div class="metric"><span>Detection</span><strong id="detection">-</strong></div>
       <div class="metric"><span>Severity</span><strong id="severity">-</strong></div>
       <div class="metric"><span>Expected</span><strong id="expected">-</strong></div>
-      <div class="metric"><span>Status</span><strong id="status">Ready</strong></div>
+      <div class="metric"><span>Runtime</span><strong id="status">Ready</strong></div>
     </section>
-    <section class="panel">
-      <h2>Rule evaluation</h2>
-      <p id="rule-reason">Waiting for synthetic events.</p>
-      <p id="matched-fields"></p>
-    </section>
-    <section class="grid">
+    <section class="workbench">
       <div class="panel">
-        <h2>Event stream</h2>
+        <h2>Incident queue</h2>
+        <p id="queue-summary">No incidents yet.</p>
+        <div id="incident-queue" class="queue"></div>
+      </div>
+      <div class="panel">
+        <h2>Incident detail</h2>
+        <p id="summary"></p>
+        <h3>Event stream</h3>
         <table>
           <thead>
             <tr>
@@ -849,182 +1080,289 @@ def render_live_app() -> str:
           </thead>
           <tbody id="events"></tbody>
         </table>
+        <h3>Timeline</h3>
+        <ul id="timeline" class="timeline"></ul>
       </div>
       <div class="panel">
-        <h2>Incident timeline</h2>
-        <p id="summary"></p>
-        <ul id="timeline" class="timeline"></ul>
+        <h2>Entities</h2>
+        <div id="entities" class="kv"></div>
+        <h3>Rule evaluation</h3>
+        <p id="rule-reason">Waiting for synthetic events.</p>
+        <p id="matched-fields"></p>
         <div class="note-form">
           <h3>Analyst action</h3>
           <select id="analyst-status">
+            <option>New</option>
             <option>Investigating</option>
             <option>Benign</option>
             <option>Suspicious</option>
             <option>Escalated</option>
+            <option>Closed</option>
           </select>
           <textarea id="analyst-note" placeholder="Analyst note"></textarea>
           <button id="save-note">Save note</button>
           <p id="note-status"></p>
+          <h3>Notes</h3>
+          <div id="notes" class="kv"></div>
         </div>
       </div>
     </section>
   </main>
   <script>
-    const state = {{
+    const state = {
       scenarios: [],
       scenario: null,
       timer: null,
-      incident: null
-    }};
+      incident: null,
+      selectedIncidentId: null
+    };
 
     const $ = (id) => document.getElementById(id);
+    const h = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+    }[char]));
 
-    async function loadScenarios() {{
+    async function loadScenarios() {
       const response = await fetch('/api/scenarios');
       state.scenarios = await response.json();
       $('scenario').innerHTML = state.scenarios
-        .map((item) => {{
-          const label = `${{item.scenario_id}} - ${{item.title}}`;
-          return `<option value="${{item.scenario_id}}">${{label}}</option>`;
-        }})
+        .map((item) => {
+          const label = `${item.scenario_id} - ${item.title}`;
+          return `<option value="${h(item.scenario_id)}">${h(label)}</option>`;
+        })
         .join('');
       await loadScenario(state.scenarios[0].scenario_id);
-    }}
+      await loadIncidents();
+    }
 
-    async function loadScenario(id) {{
-      const response = await fetch(`/api/scenarios/${{id}}`);
+    async function loadScenario(id) {
+      const response = await fetch(`/api/scenarios/${id}`);
       state.scenario = await response.json();
-      await reset();
-    }}
-
-    async function reset() {{
-      clearInterval(state.timer);
-      state.timer = null;
-      state.incident = null;
-      const response = await fetch(`/api/reset?scenario=${{state.scenario.scenario_id}}`, {{
-        method: 'POST'
-      }});
-      const payload = await response.json();
       $('summary').textContent = state.scenario.summary;
       $('detection').textContent = state.scenario.primary_detection;
       $('severity').textContent = state.scenario.severity;
       $('expected').textContent = state.scenario.expected_result;
+      const stateResponse = await fetch(`/api/state?scenario=${state.scenario.scenario_id}`);
+      const payload = await stateResponse.json();
+      renderState(payload);
+      await loadIncidents(payload.incident ? payload.incident.id : null);
+    }
+
+    async function reset() {
+      clearInterval(state.timer);
+      state.timer = null;
+      const response = await fetch(`/api/reset?scenario=${state.scenario.scenario_id}`, {
+        method: 'POST'
+      });
+      const payload = await response.json();
+      state.selectedIncidentId = null;
       $('note-status').textContent = '';
       renderState(payload);
-    }}
+      await loadIncidents();
+    }
 
-    function start() {{
+    async function resetRuntime() {
+      pause();
+      await fetch('/api/runtime/reset', { method: 'POST' });
+      state.selectedIncidentId = null;
+      state.incident = null;
+      await loadIncidents();
+      if (state.scenario) {
+        await reset();
+      }
+    }
+
+    function start() {
       if (!state.scenario || state.timer) return;
       $('status').textContent = 'Running';
       state.timer = setInterval(tick, Number($('speed').value));
       tick();
-    }}
+    }
 
-    function pause() {{
-      if (state.timer) {{
+    function pause() {
+      if (state.timer) {
         clearInterval(state.timer);
         state.timer = null;
         $('status').textContent = 'Paused';
-      }}
-    }}
+      }
+    }
 
-    async function tick() {{
-      const response = await fetch(`/api/tick?scenario=${{state.scenario.scenario_id}}`, {{
+    async function tick() {
+      const response = await fetch(`/api/tick?scenario=${state.scenario.scenario_id}`, {
         method: 'POST'
-      }});
+      });
       const payload = await response.json();
       renderState(payload);
-      if (payload.complete) {{
+      await loadIncidents(payload.incident ? payload.incident.id : null);
+      if (payload.complete) {
         clearInterval(state.timer);
         state.timer = null;
-      }}
-    }}
+      }
+    }
 
-    function renderState(payload) {{
+    async function loadIncidents(preferredId = null) {
+      const response = await fetch('/api/incidents');
+      const incidents = await response.json();
+      $('queue-summary').textContent = incidents.length
+        ? `${incidents.length} incident(s) in local queue.`
+        : 'No incidents yet.';
+      $('incident-queue').innerHTML = incidents.map((incident) => {
+        const selected = incident.id === state.selectedIncidentId ? 'selected' : '';
+        return `
+        <button data-incident="${incident.id}" class="${selected}">
+          <span class="pill">${h(incident.status)}</span>
+          <strong>${h(incident.detection)}</strong><br>
+          ${h(incident.account)} | ${h(incident.ip)}<br>
+          <small>${h(incident.scenario_id)} | notes: ${h(incident.note_count)}</small>
+        </button>`;
+      }).join('');
+      document.querySelectorAll('[data-incident]').forEach((button) => {
+        button.addEventListener('click', () => selectIncident(Number(button.dataset.incident)));
+      });
+      const targetId = preferredId || state.selectedIncidentId || (incidents[0] && incidents[0].id);
+      if (targetId) {
+        await selectIncident(Number(targetId), false);
+      }
+    }
+
+    async function selectIncident(id, refreshQueue = true) {
+      const response = await fetch(`/api/incidents/${id}`);
+      if (!response.ok) return;
+      const detail = await response.json();
+      state.selectedIncidentId = id;
+      state.incident = detail.incident;
+      renderIncidentDetail(detail);
+      if (refreshQueue) {
+        await loadIncidents(id);
+      }
+    }
+
+    function renderState(payload) {
       state.incident = payload.incident;
-      $('events').innerHTML = payload.events.map((event) => `
+      renderEvents(payload.events);
+      renderEvaluation(payload.evaluation);
+      renderTimeline(payload.events, payload.incident);
+      renderEntities({});
+      renderNotes(payload.analyst_notes || []);
+      if (payload.incident) {
+        state.selectedIncidentId = payload.incident.id;
+        $('status').textContent = 'Alert';
+      } else if (payload.complete) {
+        $('status').textContent = 'Complete';
+      } else if (payload.event_count > 0) {
+        $('status').textContent = 'Observing';
+      } else {
+        $('status').textContent = 'Ready';
+      }
+    }
+
+    function renderIncidentDetail(detail) {
+      state.incident = detail.incident;
+      $('summary').textContent = `${detail.scenario.scenario_id}: ${detail.scenario.summary}`;
+      $('analyst-status').value = detail.incident.status;
+      renderEvents(detail.events);
+      renderEvaluation(detail.evaluation);
+      renderTimeline(detail.events, detail.incident);
+      renderEntities(detail.entities);
+      renderNotes(detail.notes);
+      $('status').textContent = detail.incident.status;
+    }
+
+    function renderEvents(events) {
+      $('events').innerHTML = events.map((event) => `
         <tr>
-          <td>t+${{event.offset}}s</td>
-          <td><span class="pill">${{event.table}}</span></td>
-          <td>${{event.account}}</td>
-          <td>${{event.ip}}</td>
-          <td>${{event.host}}</td>
-          <td>${{event.result}}</td>
-          <td>${{event.detail}}</td>
+          <td>t+${h(event.offset)}s</td>
+          <td><span class="pill">${h(event.table)}</span></td>
+          <td>${h(event.account)}</td>
+          <td>${h(event.ip)}</td>
+          <td>${h(event.host)}</td>
+          <td>${h(event.result)}</td>
+          <td>${h(event.detail)}</td>
         </tr>
       `).join('');
-      $('rule-reason').textContent = payload.evaluation.reason;
-      $('matched-fields').textContent = payload.evaluation.matched_fields.join(' | ');
-      if (payload.incident) {{
-        $('status').textContent = 'Alert';
-      }} else if (payload.complete) {{
-        $('status').textContent = 'Complete';
-      }} else if (payload.event_count > 0) {{
-        $('status').textContent = 'Observing';
-      }} else {{
-        $('status').textContent = 'Ready';
-      }}
-      renderTimeline(payload);
-    }}
+    }
 
-    function renderTimeline(payload) {{
-      const items = [];
-      payload.events.forEach((event) => {{
-        items.push({{
-          status: 'event',
-          message: `${{event.table}}: ${{event.detail}}`
-        }});
-      }});
-      if (payload.incident) {{
-        items.push({{
+    function renderEvaluation(evaluation) {
+      $('rule-reason').textContent = evaluation.reason || 'Waiting for synthetic events.';
+      $('matched-fields').textContent = (evaluation.matched_fields || []).join(' | ');
+    }
+
+    function renderTimeline(events, incident) {
+      const items = events.map((event) => ({
+        status: 'event',
+        message: `${event.table}: ${event.detail}`
+      }));
+      if (incident) {
+        items.push({
           status: 'alert',
-          message: `Incident #${{payload.incident.id}}: ${{payload.incident.reason}}`
-        }});
-      }}
-      $('timeline').innerHTML = items.map((item) => {{
+          message: `Incident #${incident.id}: ${incident.reason}`
+        });
+      }
+      $('timeline').innerHTML = items.map((item) => {
         const className = item.status === 'alert' ? 'alert' : '';
         const textClass = item.status === 'alert' ? 'alert-text' : 'ok-text';
         const label = item.status === 'alert' ? 'ALERT' : 'EVENT';
-        return `<li class="${{className}}">` +
-          `<strong class="${{textClass}}">${{label}}</strong>` +
-          `<p>${{item.message}}</p></li>`;
-      }}).join('');
-    }}
+        return `<li class="${className}">` +
+          `<strong class="${textClass}">${label}</strong>` +
+          `<p>${h(item.message)}</p></li>`;
+      }).join('');
+    }
 
-    async function exportEvidence(format) {{
-      const id = state.scenario.scenario_id;
-      const response = await fetch(`/api/evidence?scenario=${{id}}&format=${{format}}`);
+    function renderEntities(entities) {
+      const groups = ['accounts', 'ips', 'hosts', 'sources', 'tables'];
+      $('entities').innerHTML = groups.map((group) => {
+        const values = entities[group] || [];
+        return `<div><strong>${h(group)}</strong><br>${h(values.join(', ') || '-')}</div>`;
+      }).join('');
+    }
+
+    function renderNotes(notes) {
+      $('notes').innerHTML = notes.length ? notes.map((note) => `
+        <div><strong>${h(note.status)}</strong><br>${h(note.note)}<br><small>${h(note.created_at)}</small></div>
+      `).join('') : '<div>No notes yet.</div>';
+    }
+
+    async function exportEvidence(format) {
+      const suffix = state.selectedIncidentId
+        ? `incident=${state.selectedIncidentId}&format=${format}`
+        : `scenario=${state.scenario.scenario_id}&format=${format}`;
+      const response = await fetch(`/api/evidence?${suffix}`);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
+      const id = state.selectedIncidentId
+        ? `incident-${state.selectedIncidentId}`
+        : state.scenario.scenario_id;
       link.href = url;
-      link.download = `${{id}}-live-evidence.${{format}}`;
+      link.download = `${id}-live-evidence.${format}`;
       link.click();
       URL.revokeObjectURL(url);
-    }}
+    }
 
-    async function saveNote() {{
-      if (!state.incident) {{
+    async function saveNote() {
+      if (!state.selectedIncidentId) {
         $('note-status').textContent = 'Run a scenario until an incident is created.';
         return;
-      }}
-      const response = await fetch('/api/analyst-note', {{
+      }
+      const response = await fetch(`/api/incidents/${state.selectedIncidentId}/analyst-action`, {
         method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{
-          incident_id: state.incident.id,
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
           status: $('analyst-status').value,
           note: $('analyst-note').value
-        }})
-      }});
+        })
+      });
       const payload = await response.json();
-      $('note-status').textContent = `Saved: ${{payload.status}}`;
-    }}
+      $('note-status').textContent = `Saved: ${payload.status}`;
+      $('analyst-note').value = '';
+      await selectIncident(state.selectedIncidentId);
+    }
 
     $('scenario').addEventListener('change', (event) => loadScenario(event.target.value));
     $('start').addEventListener('click', start);
     $('pause').addEventListener('click', pause);
     $('reset').addEventListener('click', reset);
+    $('reset-runtime').addEventListener('click', resetRuntime);
     $('export-json').addEventListener('click', () => exportEvidence('json'));
     $('export-md').addEventListener('click', () => exportEvidence('md'));
     $('save-note').addEventListener('click', saveNote);
@@ -1033,6 +1371,7 @@ def render_live_app() -> str:
 </body>
 </html>
 """
+    return html.replace("__SCOPE_WARNING__", SCOPE_WARNING)
 
 
 def serve_live(host: str = "127.0.0.1", port: int = 8090) -> int:
@@ -1064,10 +1403,49 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(scenario_to_dict(scenario))
             return
-        if parsed.path == "/api/evidence":
+        if parsed.path == "/api/state":
             params = parse_qs(parsed.query)
             scenario_id = params.get("scenario", ["SENT-006-POS"])[0]
+            self._send_json(live_state(scenario_id))
+            return
+        if parsed.path == "/api/incidents":
+            self._send_json(incident_queue())
+            return
+        if parsed.path.startswith("/api/incidents/"):
+            incident_id = parsed.path.rsplit("/", maxsplit=1)[-1]
+            try:
+                detail = incident_detail(int(incident_id))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=404)
+                return
+            if detail is None:
+                self._send_json({"error": "incident not found"}, status=404)
+                return
+            self._send_json(detail)
+            return
+        if parsed.path == "/api/evidence":
+            params = parse_qs(parsed.query)
+            incident_param = params.get("incident", [None])[0]
+            scenario_id = params.get("scenario", ["SENT-006-POS"])[0]
             output_format = params.get("format", ["json"])[0]
+            if incident_param is not None:
+                try:
+                    incident_id = int(incident_param)
+                    detail = incident_detail(incident_id)
+                    if detail is None:
+                        self._send_json({"error": "incident not found"}, status=404)
+                        return
+                    if output_format == "md":
+                        self._send_text(
+                            incident_evidence_markdown(incident_id),
+                            "text/markdown; charset=utf-8",
+                        )
+                        return
+                    self._send_json(detail)
+                    return
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=404)
+                    return
             scenario = get_scenario(scenario_id)
             if scenario is None:
                 self._send_json({"error": "scenario not found"}, status=404)
@@ -1090,8 +1468,24 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/reset":
                 self._send_json(reset_run(scenario_id))
                 return
+            if parsed.path == "/api/runtime/reset":
+                self._send_json(reset_runtime())
+                return
             if parsed.path == "/api/tick":
                 self._send_json(tick_run(scenario_id))
+                return
+            if parsed.path.startswith("/api/incidents/") and parsed.path.endswith(
+                "/analyst-action"
+            ):
+                parts = parsed.path.strip("/").split("/")
+                incident_id = int(parts[2])
+                payload = self._read_json_body()
+                result = update_incident_action(
+                    incident_id,
+                    str(payload.get("status", "Investigating")),
+                    str(payload.get("note", "")),
+                )
+                self._send_json(result)
                 return
             if parsed.path == "/api/analyst-note":
                 payload = self._read_json_body()
