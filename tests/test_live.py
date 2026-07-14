@@ -61,6 +61,10 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "reset runtime state" in html
     assert "case run" in html
     assert "training mode" in html
+    assert "workbench views" in html
+    assert "data-view-panel=\"overview\"" in html
+    assert "data-view-panel=\"incidents\"" in html
+    assert "guided case investigation" in html
     assert "learning objectives" in html
     assert "guided steps" in html
     assert "hint" in html

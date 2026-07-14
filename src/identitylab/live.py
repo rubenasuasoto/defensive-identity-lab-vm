@@ -1981,9 +1981,34 @@ def _render_workbench_app() -> str:
       align-items: center;
       flex-wrap: wrap;
     }
+    .view-nav {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+    .view-tab {
+      background: #eef4fb;
+      color: var(--ink);
+    }
+    .view-tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .view {
+      display: grid;
+      gap: 16px;
+    }
+    .view[hidden] { display: none; }
+    .view-heading {
+      display: grid;
+      gap: 6px;
+    }
     .cards {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
     }
     .metric {
@@ -1999,6 +2024,24 @@ def _render_workbench_app() -> str:
       gap: 16px;
       align-items: start;
     }
+    .case-grid, .training-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .case-grid .wide { grid-column: 1 / -1; }
+    .event-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .event-list div {
+      border-left: 4px solid var(--accent);
+      background: #f8fbff;
+      padding: 10px;
+    }
+    .table-wrap { overflow-x: auto; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -2061,7 +2104,16 @@ def _render_workbench_app() -> str:
     .note-form { display: grid; gap: 8px; margin-top: 12px; }
     .filters { display: grid; gap: 8px; margin-top: 10px; }
     @media (max-width: 1100px) {
-      .workbench, .cards { grid-template-columns: 1fr; }
+      .workbench, .case-grid, .training-grid { grid-template-columns: 1fr; }
+      .case-grid .wide { grid-column: auto; }
+    }
+    @media (max-width: 700px) {
+      main { padding: 12px; }
+      header { padding: 18px 12px; }
+      h1 { font-size: 1.55rem; }
+      .cards { grid-template-columns: 1fr; }
+      .toolbar > label, .toolbar > strong { width: 100%; }
+      .toolbar select, .toolbar button { width: 100%; }
     }
   </style>
 </head>
@@ -2072,49 +2124,56 @@ def _render_workbench_app() -> str:
   </header>
   <main>
     <div class="warning">__SCOPE_WARNING__</div>
-    <section class="toolbar">
-      <label for="scenario">Scenario</label>
-      <select id="scenario"></select>
-      <label for="speed">Speed</label>
-      <select id="speed">
-        <option value="1200">1x</option>
-        <option value="650">2x</option>
-        <option value="120">Instant</option>
-      </select>
-      <button id="start" class="primary">Start</button>
-      <button id="pause">Pause</button>
-      <button id="reset">Reset scenario</button>
-      <button id="reset-runtime">Reset runtime state</button>
-      <button id="export-json">Export JSON</button>
-      <button id="export-md">Export MD</button>
+    <nav class="view-nav" aria-label="Workbench views">
+      <button class="view-tab active" data-view="overview" aria-selected="true">Overview</button>
+      <button class="view-tab" data-view="incidents" aria-selected="false">Incidents</button>
+      <button class="view-tab" data-view="case" aria-selected="false">Case run</button>
+      <button class="view-tab" data-view="training" aria-selected="false">Training</button>
+    </nav>
+
+    <section class="view" data-view-panel="overview">
+      <section class="panel view-heading">
+        <h2>Scenario workspace</h2>
+        <p>Run a synthetic detection scenario, then review its evidence in Incidents.</p>
+      </section>
+      <section class="toolbar">
+        <label for="scenario">Scenario</label>
+        <select id="scenario"></select>
+        <label for="speed">Speed</label>
+        <select id="speed">
+          <option value="1200">1x</option>
+          <option value="650">2x</option>
+          <option value="120">Instant</option>
+        </select>
+        <button id="start" class="primary">Start</button>
+        <button id="pause">Pause</button>
+        <button id="reset">Reset scenario</button>
+        <button id="reset-runtime">Reset runtime state</button>
+        <button id="export-json">Export JSON</button>
+        <button id="export-md">Export MD</button>
+      </section>
+      <section class="cards">
+        <div class="metric"><span>Detection</span><strong id="detection">-</strong></div>
+        <div class="metric"><span>Severity</span><strong id="severity">-</strong></div>
+        <div class="metric"><span>Expected</span><strong id="expected">-</strong></div>
+        <div class="metric"><span>Runtime</span><strong id="status">Ready</strong></div>
+        <div class="metric"><span>Benign events</span><strong id="benign-count">0</strong></div>
+        <div class="metric"><span>Signal events</span><strong id="signal-count">0</strong></div>
+      </section>
+      <section class="panel view-heading">
+        <h2>Next step</h2>
+        <p>When the scenario reaches an alert, open the incident queue to inspect
+          entities, rule evidence and analyst notes.</p>
+        <div><button data-open-view="incidents" class="primary">Review incidents</button></div>
+      </section>
     </section>
-    <section class="toolbar">
-      <strong>Training Mode</strong>
-      <select id="training-select"></select>
-      <button id="training-start" class="primary">Start Training</button>
-      <button id="training-hint">Hint</button>
-      <button id="training-export-json">Export training JSON</button>
-      <button id="training-export-md">Export training MD</button>
-      <span id="training-status">No active training.</span>
-    </section>
-    <section class="toolbar">
-      <strong>Case run</strong>
-      <select id="case-select"></select>
-      <button id="case-start" class="primary">Start Case run</button>
-      <button id="case-tick">Next case event</button>
-      <button id="case-export-json">Export case JSON</button>
-      <button id="case-export-md">Export case MD</button>
-      <span id="case-status">No active case.</span>
-    </section>
-    <section class="cards">
-      <div class="metric"><span>Detection</span><strong id="detection">-</strong></div>
-      <div class="metric"><span>Severity</span><strong id="severity">-</strong></div>
-      <div class="metric"><span>Expected</span><strong id="expected">-</strong></div>
-      <div class="metric"><span>Runtime</span><strong id="status">Ready</strong></div>
-      <div class="metric"><span>Benign events</span><strong id="benign-count">0</strong></div>
-      <div class="metric"><span>Signal events</span><strong id="signal-count">0</strong></div>
-    </section>
-    <section class="workbench">
+
+    <section class="view" data-view-panel="incidents" hidden>
+      <section class="panel view-heading">
+        <h2>Incident investigation</h2>
+        <p>Filter the local queue, review the evidence and record an analyst action.</p>
+      </section>
+      <section class="workbench">
       <div class="panel">
         <h2>Incident queue</h2>
         <p id="queue-summary">No incidents yet.</p>
@@ -2142,14 +2201,14 @@ def _render_workbench_app() -> str:
         <h2>Incident detail</h2>
         <p id="summary"></p>
         <h3>Event stream</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th><th>Table</th><th>Account</th><th>IP</th><th>Host</th><th>Result</th><th>Detail</th>
-            </tr>
-          </thead>
-          <tbody id="events"></tbody>
-        </table>
+        <div class="table-wrap"><table>
+            <thead>
+              <tr>
+                <th>Time</th><th>Table</th><th>Account</th><th>IP</th><th>Host</th><th>Result</th><th>Detail</th>
+              </tr>
+            </thead>
+            <tbody id="events"></tbody>
+          </table></div>
         <h3>Timeline</h3>
         <ul id="timeline" class="timeline"></ul>
       </div>
@@ -2174,27 +2233,86 @@ def _render_workbench_app() -> str:
           <p id="note-status"></p>
           <h3>Notes</h3>
           <div id="notes" class="kv"></div>
-          <h3>Learning objectives</h3>
-          <div id="learning-objectives" class="kv"></div>
-          <h3>Guided steps</h3>
-          <div id="guided-steps" class="kv"></div>
-          <h3>Feedback</h3>
-          <p id="training-feedback">Start a training module for guided feedback.</p>
-          <p id="training-hint-output"></p>
-          <h3>Analyst tasks</h3>
-          <div id="case-tasks" class="kv"></div>
-          <h3>Close case</h3>
-          <select id="case-decision">
-            <option>Suspicious</option>
-            <option>Escalated</option>
-            <option>Benign</option>
-            <option>Closed</option>
-          </select>
-          <textarea id="case-note" placeholder="Case decision note"></textarea>
-          <button id="case-close">Close case</button>
-          <p id="case-note-status"></p>
         </div>
       </div>
+    </section>
+    </section>
+
+    <section class="view" data-view-panel="case" hidden>
+      <section class="panel view-heading">
+        <h2>Guided case investigation</h2>
+        <p>Emit one event at a time, review the synthetic evidence and close the case
+          with a defensible decision.</p>
+      </section>
+      <section class="toolbar">
+        <strong>Case run</strong>
+        <select id="case-select"></select>
+        <button id="case-start" class="primary">Start Case run</button>
+        <button id="case-tick">Next case event</button>
+        <button id="case-export-json">Export case JSON</button>
+        <button id="case-export-md">Export case MD</button>
+        <span id="case-status">No active case.</span>
+      </section>
+      <section class="case-grid">
+        <div class="panel">
+          <h2>Case overview</h2>
+          <p id="case-summary">Start a case run to load its synthetic evidence.</p>
+          <h3>Entities</h3>
+          <div id="case-entities" class="kv"></div>
+        </div>
+        <div class="panel">
+          <h2>Analyst tasks</h2>
+          <div id="case-tasks" class="kv"></div>
+          <div class="note-form">
+            <h3>Close case</h3>
+            <select id="case-decision">
+              <option>Suspicious</option>
+              <option>Escalated</option>
+              <option>Benign</option>
+              <option>Closed</option>
+            </select>
+            <textarea id="case-note" placeholder="Case decision note"></textarea>
+            <button id="case-close">Close case</button>
+            <p id="case-note-status"></p>
+          </div>
+        </div>
+        <div class="panel wide">
+          <h2>Case event stream</h2>
+          <div id="case-events" class="event-list"><div>No case events yet.</div></div>
+        </div>
+      </section>
+    </section>
+
+    <section class="view" data-view-panel="training" hidden>
+      <section class="panel view-heading">
+        <h2>Training Mode</h2>
+        <p>Work through guided checkpoints before deciding how the synthetic case
+          should be closed.</p>
+      </section>
+      <section class="toolbar">
+        <strong>Training Mode</strong>
+        <select id="training-select"></select>
+        <button id="training-start" class="primary">Start Training</button>
+        <button id="training-hint">Hint</button>
+        <button id="training-export-json">Export training JSON</button>
+        <button id="training-export-md">Export training MD</button>
+        <span id="training-status">No active training.</span>
+      </section>
+      <section class="training-grid">
+        <div class="panel">
+          <h2>Learning objectives</h2>
+          <div id="learning-objectives" class="kv"></div>
+        </div>
+        <div class="panel">
+          <h2>Guided steps</h2>
+          <div id="guided-steps" class="kv"></div>
+        </div>
+        <div class="panel wide">
+          <h2>Feedback</h2>
+          <p id="training-feedback">Start a training module for guided feedback.</p>
+          <p id="training-hint-output"></p>
+        </div>
+      </section>
     </section>
   </main>
   <script>
@@ -2215,6 +2333,17 @@ def _render_workbench_app() -> str:
     const h = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
     }[char]));
+
+    function setView(name) {
+      document.querySelectorAll('[data-view-panel]').forEach((panel) => {
+        panel.hidden = panel.dataset.viewPanel !== name;
+      });
+      document.querySelectorAll('[data-view]').forEach((button) => {
+        const active = button.dataset.view === name;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+      });
+    }
 
     async function loadScenarios() {
       const response = await fetch('/api/scenarios');
@@ -2492,6 +2621,18 @@ def _render_workbench_app() -> str:
       const caseProgress = `${payload.event_count}/${payload.case.event_total} events`;
       $('case-status').textContent =
         `${payload.case.case_id} run ${payload.run.id} | ${caseProgress} | ${payload.run.status}`;
+      $('case-summary').textContent = payload.case.summary;
+      $('case-events').innerHTML = payload.events.length ? payload.events.map((event) => `
+        <div>
+          <strong>t+${h(event.offset)}s · ${h(event.table)}</strong><br>
+          ${h(event.account)} | ${h(event.ip)} | ${h(event.result)}<br>
+          <small>${h(event.detail)}</small>
+        </div>`).join('') : '<div>No case events yet.</div>';
+      const entityGroups = ['accounts', 'ips', 'hosts', 'sources', 'tables'];
+      $('case-entities').innerHTML = entityGroups.map((group) => {
+        const values = (payload.entities || {})[group] || [];
+        return `<div><strong>${h(group)}</strong><br>${h(values.join(', ') || '-')}</div>`;
+      }).join('');
       renderEvents(payload.events);
       renderEvaluation(payload.evaluation);
       renderTimeline(payload.events, payload.incident);
@@ -2761,6 +2902,13 @@ def _render_workbench_app() -> str:
     $('export-json').addEventListener('click', () => exportEvidence('json'));
     $('export-md').addEventListener('click', () => exportEvidence('md'));
     $('save-note').addEventListener('click', saveNote);
+    document.querySelectorAll('[data-view]').forEach((button) => {
+      button.addEventListener('click', () => setView(button.dataset.view));
+    });
+    document.querySelectorAll('[data-open-view]').forEach((button) => {
+      button.addEventListener('click', () => setView(button.dataset.openView));
+    });
+    setView('overview');
     loadScenarios();
   </script>
 </body>
