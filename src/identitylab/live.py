@@ -22,6 +22,11 @@ ALLOWED_INCIDENT_STATUSES = {
     "Escalated",
     "Closed",
 }
+ALLOWED_INSTRUCTOR_RATINGS = {
+    "Needs guided practice",
+    "Developing",
+    "Ready for independent review",
+}
 
 
 @dataclass(frozen=True)
@@ -55,10 +60,12 @@ class TrainingModule:
     audience: str
     case_id: str
     summary: str
+    instructor_brief: str
     objectives: list[str]
     guided_steps: list[dict[str, str]]
     hints: list[str]
     expected_decisions: list[str]
+    assessment: list[dict[str, object]]
 
 
 SCENARIOS: list[LiveScenario] = [
@@ -366,6 +373,11 @@ TRAINING_MODULES: list[TrainingModule] = [
             "Guided lesson for separating benign identity noise from a correlated "
             "Entra and Windows authentication incident."
         ),
+        instructor_brief=(
+            "Use this module to coach the learner through evidence triage, entity "
+            "correlation and a defensible case closure. The instructor view scores "
+            "progress, task completion, alert evidence and final decision."
+        ),
         objectives=[
             "Identify benign noise before escalating an alert.",
             "Correlate account, IP and host across Entra and Windows events.",
@@ -409,6 +421,28 @@ TRAINING_MODULES: list[TrainingModule] = [
             ),
         ],
         expected_decisions=["Suspicious", "Escalated"],
+        assessment=[
+            {
+                "name": "Guided checkpoints",
+                "max_points": 4,
+                "description": "Learner completes the investigation checkpoints.",
+            },
+            {
+                "name": "Analyst tasks",
+                "max_points": 2,
+                "description": "Learner completes the case task checklist.",
+            },
+            {
+                "name": "Evidence recognition",
+                "max_points": 2,
+                "description": "Learner reaches the alert and reviews the incident evidence.",
+            },
+            {
+                "name": "Final decision",
+                "max_points": 2,
+                "description": "Learner closes as Suspicious or Escalated with a note.",
+            },
+        ],
     )
 ]
 
@@ -516,10 +550,12 @@ def training_to_dict(module: TrainingModule) -> dict[str, object]:
         "audience": module.audience,
         "case_id": module.case_id,
         "summary": module.summary,
+        "instructor_brief": module.instructor_brief,
         "objectives": module.objectives,
         "guided_steps": module.guided_steps,
         "hints": module.hints,
         "expected_decisions": module.expected_decisions,
+        "assessment": module.assessment,
         "scope_warning": SCOPE_WARNING,
     }
 
@@ -650,6 +686,17 @@ def init_store(db_path: Path = LIVE_DB) -> None:
                 hint_index INTEGER NOT NULL,
                 hint TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS instructor_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                training_run_id INTEGER NOT NULL UNIQUE,
+                rating TEXT NOT NULL,
+                observation TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """
         )
@@ -906,7 +953,11 @@ def reset_runtime(db_path: Path = LIVE_DB) -> dict[str, object]:
             "training_hints": connection.execute(
                 "SELECT COUNT(*) FROM training_hints"
             ).fetchone()[0],
+            "instructor_reviews": connection.execute(
+                "SELECT COUNT(*) FROM instructor_reviews"
+            ).fetchone()[0],
         }
+        connection.execute("DELETE FROM instructor_reviews")
         connection.execute("DELETE FROM training_hints")
         connection.execute("DELETE FROM training_checkpoints")
         connection.execute("DELETE FROM training_runs")
@@ -1117,15 +1168,54 @@ def training_run_detail(
         raise ValueError(f"Unknown training run: {training_run_id}")
     module = _require_training_module(str(row["module_id"]))
     case_detail = case_run_detail(int(row["case_run_id"]), db_path)
+    checkpoints = _load_training_checkpoints(training_run_id, db_path)
+    hints = _load_training_hints(training_run_id, db_path)
     return {
         "run": row,
         "module": training_to_dict(module),
         "case_run": case_detail,
-        "checkpoints": _load_training_checkpoints(training_run_id, db_path),
-        "hints": _load_training_hints(training_run_id, db_path),
+        "checkpoints": checkpoints,
+        "hints": hints,
         "feedback": _training_feedback(row, case_detail, module),
+        "instructor": _training_instructor_summary(
+            row,
+            case_detail,
+            module,
+            checkpoints,
+            hints,
+        ),
+        "review": _load_instructor_review(training_run_id, db_path),
         "scope_warning": SCOPE_WARNING,
     }
+
+
+def save_instructor_review(
+    training_run_id: int,
+    rating: str,
+    observation: str,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    if _load_training_run(training_run_id, db_path) is None:
+        raise ValueError(f"Unknown training run: {training_run_id}")
+    clean_rating = rating.strip() or "Developing"
+    if clean_rating not in ALLOWED_INSTRUCTOR_RATINGS:
+        raise ValueError(f"Invalid instructor rating: {clean_rating}")
+    clean_observation = observation.strip()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO instructor_reviews (
+              training_run_id, rating, observation, updated_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(training_run_id) DO UPDATE SET
+              rating = excluded.rating,
+              observation = excluded.observation,
+              updated_at = excluded.updated_at
+            """,
+            (training_run_id, clean_rating, clean_observation, _now()),
+        )
+    return training_run_detail(training_run_id, db_path)
 
 
 def update_training_checkpoint(
@@ -1188,6 +1278,9 @@ def training_evidence_markdown(
         f"- Audience: {module['audience']}",
         f"- Status: {run['status']}",
         f"- Feedback: {detail['feedback']}",
+        f"- Instructor score: {detail['instructor']['score']} / "
+        f"{detail['instructor']['max_score']}",
+        f"- Instructor readiness: {detail['instructor']['readiness']}",
         "",
         "## Learning objectives",
         "",
@@ -1204,6 +1297,17 @@ def training_evidence_markdown(
             lines.append(f"- {hint['hint']}")
     else:
         lines.append("- None")
+    lines.extend(["", "## Instructor assessment", ""])
+    for criterion in detail["instructor"]["criteria"]:
+        lines.append(
+            f"- {criterion['name']}: {criterion['points']} / "
+            f"{criterion['max_points']} - {criterion['status']}"
+        )
+    lines.append(f"- Recommendation: {detail['instructor']['recommendation']}")
+    if detail["review"]:
+        lines.extend(["", "## Instructor review", ""])
+        lines.append(f"- Rating: {detail['review']['rating']}")
+        lines.append(f"- Observation: {detail['review']['observation'] or '-'}")
     lines.extend(["", "## Case summary", ""])
     lines.append(f"- Case: {case_detail['case']['case_id']}")
     lines.append(f"- Events: {case_detail['event_count']}")
@@ -1811,6 +1915,30 @@ def _load_training_hints(
     ]
 
 
+def _load_instructor_review(
+    training_run_id: int,
+    db_path: Path,
+) -> dict[str, object] | None:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT rating, observation, updated_at
+            FROM instructor_reviews
+            WHERE training_run_id = ?
+            """,
+            (training_run_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "training_run_id": training_run_id,
+        "rating": row[0],
+        "observation": row[1],
+        "updated_at": row[2],
+    }
+
+
 def _complete_training_for_case(case_run_id: int, db_path: Path) -> None:
     with sqlite3.connect(db_path) as connection:
         rows = connection.execute(
@@ -1836,6 +1964,99 @@ def _complete_training_for_case(case_run_id: int, db_path: Path) -> None:
                 """,
                 (feedback, _now(), training_run_id),
             )
+
+
+def _training_instructor_summary(
+    run: dict[str, object],
+    case_detail: dict[str, object],
+    module: TrainingModule,
+    checkpoints: list[dict[str, object]],
+    hints: list[dict[str, object]],
+) -> dict[str, object]:
+    checkpoint_total = len(checkpoints)
+    checkpoint_done = sum(1 for checkpoint in checkpoints if checkpoint["completed"])
+    task_total = len(case_detail["tasks"])
+    task_done = sum(1 for task in case_detail["tasks"] if task["completed"])
+    event_total = int(case_detail["case"]["event_total"])
+    event_count = int(case_detail["event_count"])
+    incident = case_detail["incident"]
+    decision = str(case_detail["run"].get("decision") or "")
+    expected = decision in module.expected_decisions
+
+    checkpoint_points = _fractional_points(checkpoint_done, checkpoint_total, 4)
+    task_points = _fractional_points(task_done, task_total, 2)
+    evidence_points = 0
+    if event_count >= event_total:
+        evidence_points += 1
+    if incident:
+        evidence_points += 1
+    if expected:
+        decision_points = 2
+    elif decision:
+        decision_points = 1
+    else:
+        decision_points = 0
+
+    score = round(checkpoint_points + task_points + evidence_points + decision_points, 1)
+    if score >= 8 and expected:
+        readiness = "Ready for independent review"
+        recommendation = "Debrief the decision note, then move to an unguided scenario."
+    elif decision == "Benign":
+        readiness = "Needs corrective review"
+        recommendation = "Review why benign noise does not cancel the correlated alert evidence."
+    elif score >= 5 or expected:
+        readiness = "Developing"
+        recommendation = "Continue coaching on incomplete checkpoints or case tasks."
+    else:
+        readiness = "Needs guided practice"
+        recommendation = "Keep the learner in Instructor Mode and walk through each evidence panel."
+
+    criteria = [
+        {
+            "name": "Guided checkpoints",
+            "points": checkpoint_points,
+            "max_points": 4,
+            "status": f"{checkpoint_done}/{checkpoint_total} complete",
+        },
+        {
+            "name": "Analyst tasks",
+            "points": task_points,
+            "max_points": 2,
+            "status": f"{task_done}/{task_total} complete",
+        },
+        {
+            "name": "Evidence recognition",
+            "points": evidence_points,
+            "max_points": 2,
+            "status": (
+                "Alert reviewed" if incident else f"{event_count}/{event_total} events emitted"
+            ),
+        },
+        {
+            "name": "Final decision",
+            "points": decision_points,
+            "max_points": 2,
+            "status": decision or "Open",
+        },
+    ]
+    return {
+        "mode": "Instructor Mode",
+        "version": "0.6.0",
+        "score": score,
+        "max_score": 10,
+        "readiness": readiness,
+        "recommendation": recommendation,
+        "expected_decisions": module.expected_decisions,
+        "hints_used": len(hints),
+        "run_status": run["status"],
+        "criteria": criteria,
+    }
+
+
+def _fractional_points(done: int, total: int, max_points: int) -> float:
+    if total <= 0:
+        return 0
+    return round((done / total) * max_points, 1)
 
 
 def _training_feedback(
@@ -2128,7 +2349,7 @@ def _render_workbench_app() -> str:
       <button class="view-tab active" data-view="overview" aria-selected="true">Overview</button>
       <button class="view-tab" data-view="incidents" aria-selected="false">Incidents</button>
       <button class="view-tab" data-view="case" aria-selected="false">Case run</button>
-      <button class="view-tab" data-view="training" aria-selected="false">Training</button>
+      <button class="view-tab" data-view="training" aria-selected="false">Instructor</button>
     </nav>
 
     <section class="view" data-view-panel="overview">
@@ -2285,18 +2506,18 @@ def _render_workbench_app() -> str:
 
     <section class="view" data-view-panel="training" hidden>
       <section class="panel view-heading">
-        <h2>Training Mode</h2>
-        <p>Work through guided checkpoints before deciding how the synthetic case
-          should be closed.</p>
+        <h2>Instructor Mode v0.6.0</h2>
+        <p>Coach a learner through guided checkpoints, evidence review and a
+          defensible case decision.</p>
       </section>
       <section class="toolbar">
-        <strong>Training Mode</strong>
+        <strong>Instructor Mode</strong>
         <select id="training-select"></select>
-        <button id="training-start" class="primary">Start Training</button>
+        <button id="training-start" class="primary">Start Instructor run</button>
         <button id="training-hint">Hint</button>
-        <button id="training-export-json">Export training JSON</button>
-        <button id="training-export-md">Export training MD</button>
-        <span id="training-status">No active training.</span>
+        <button id="training-export-json">Export instructor JSON</button>
+        <button id="training-export-md">Export instructor MD</button>
+        <span id="training-status">No active instructor run.</span>
       </section>
       <section class="training-grid">
         <div class="panel">
@@ -2309,8 +2530,24 @@ def _render_workbench_app() -> str:
         </div>
         <div class="panel wide">
           <h2>Feedback</h2>
-          <p id="training-feedback">Start a training module for guided feedback.</p>
+          <p id="training-feedback">Start an instructor run for guided feedback.</p>
           <p id="training-hint-output"></p>
+        </div>
+        <div class="panel wide">
+          <h2>Instructor assessment</h2>
+          <p id="instructor-score">No active instructor score.</p>
+          <div id="instructor-assessment" class="kv"></div>
+          <div class="note-form">
+            <h3>Instructor review</h3>
+            <select id="instructor-rating">
+              <option>Needs guided practice</option>
+              <option>Developing</option>
+              <option>Ready for independent review</option>
+            </select>
+            <textarea id="instructor-observation" placeholder="Instructor observation"></textarea>
+            <button id="instructor-review-save">Save instructor review</button>
+            <p id="instructor-review-status"></p>
+          </div>
         </div>
       </section>
     </section>
@@ -2381,7 +2618,12 @@ def _render_workbench_app() -> str:
       $('guided-steps').innerHTML = module.guided_steps.map((step) =>
         `<div>${h(step.label)}</div>`
       ).join('');
-      $('training-feedback').textContent = module.summary;
+      $('training-feedback').textContent = module.instructor_brief || module.summary;
+      $('instructor-score').textContent = 'Assessment starts when the instructor run begins.';
+      $('instructor-assessment').innerHTML = (module.assessment || []).map((criterion) =>
+        `<div><strong>${h(criterion.name)}</strong><br>` +
+        `${h(criterion.max_points)} pts | ${h(criterion.description)}</div>`
+      ).join('');
     }
 
     async function startTrainingRun() {
@@ -2486,12 +2728,17 @@ def _render_workbench_app() -> str:
       state.activeCaseRun = null;
       state.activeTraining = null;
       $('case-status').textContent = 'No active case.';
-      $('training-status').textContent = 'No active training.';
+      $('training-status').textContent = 'No active instructor run.';
       $('case-tasks').innerHTML = '';
       $('learning-objectives').innerHTML = '';
       $('guided-steps').innerHTML = '';
-      $('training-feedback').textContent = 'Start a training module for guided feedback.';
+      $('training-feedback').textContent = 'Start an instructor run for guided feedback.';
       $('training-hint-output').textContent = '';
+      $('instructor-score').textContent = 'No active instructor score.';
+      $('instructor-assessment').innerHTML = '';
+      $('instructor-rating').value = 'Developing';
+      $('instructor-observation').value = '';
+      $('instructor-review-status').textContent = '';
       $('case-note-status').textContent = '';
       await loadIncidents();
       if (state.scenario) {
@@ -2624,7 +2871,7 @@ def _render_workbench_app() -> str:
       $('case-summary').textContent = payload.case.summary;
       $('case-events').innerHTML = payload.events.length ? payload.events.map((event) => `
         <div>
-          <strong>t+${h(event.offset)}s · ${h(event.table)}</strong><br>
+          <strong>t+${h(event.offset)}s | ${h(event.table)}</strong><br>
           ${h(event.account)} | ${h(event.ip)} | ${h(event.result)}<br>
           <small>${h(event.detail)}</small>
         </div>`).join('') : '<div>No case events yet.</div>';
@@ -2672,6 +2919,27 @@ def _render_workbench_app() -> str:
       $('training-hint-output').textContent = payload.latest_hint
         ? `Hint: ${payload.latest_hint}`
         : (payload.hints.length ? `Hint: ${payload.hints[payload.hints.length - 1].hint}` : '');
+      $('instructor-score').textContent =
+        `Score ${payload.instructor.score}/${payload.instructor.max_score} | ` +
+        `${payload.instructor.readiness} | hints used: ${payload.instructor.hints_used}`;
+      $('instructor-assessment').innerHTML = payload.instructor.criteria.map((criterion) =>
+        `<div><strong>${h(criterion.name)}</strong><br>` +
+        `${h(criterion.points)}/${h(criterion.max_points)} pts | ${h(criterion.status)}</div>`
+      ).join('') + `<div><strong>Recommendation</strong><br>` +
+        `${h(payload.instructor.recommendation)}</div>`;
+      const allowedRatings = [
+        'Needs guided practice',
+        'Developing',
+        'Ready for independent review'
+      ];
+      const suggestedRating = allowedRatings.includes(payload.instructor.readiness)
+        ? payload.instructor.readiness
+        : 'Developing';
+      $('instructor-rating').value = payload.review ? payload.review.rating : suggestedRating;
+      $('instructor-observation').value = payload.review ? payload.review.observation : '';
+      $('instructor-review-status').textContent = payload.review
+        ? `Review saved: ${payload.review.rating}`
+        : '';
     }
 
     function renderEvents(events) {
@@ -2816,7 +3084,7 @@ def _render_workbench_app() -> str:
 
     async function exportTrainingEvidence(format) {
       if (!state.activeTraining) {
-        $('training-feedback').textContent = 'Start a training module first.';
+        $('training-feedback').textContent = 'Start an instructor run first.';
         return;
       }
       const id = state.activeTraining.run.id;
@@ -2825,20 +3093,41 @@ def _render_workbench_app() -> str:
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `training-${id}-evidence.${format}`;
+      link.download = `instructor-${id}-evidence.${format}`;
       link.click();
       URL.revokeObjectURL(url);
     }
 
     async function requestHint() {
       if (!state.activeTraining) {
-        $('training-feedback').textContent = 'Start a training module first.';
+        $('training-feedback').textContent = 'Start an instructor run first.';
         return;
       }
       const response = await fetch(`/api/training/${state.activeTraining.run.id}/hint`, {
         method: 'POST'
       });
       renderTrainingRun(await response.json());
+    }
+
+    async function saveInstructorReview() {
+      if (!state.activeTraining) {
+        $('instructor-review-status').textContent = 'Start an instructor run first.';
+        return;
+      }
+      const response = await fetch(
+        `/api/training/${state.activeTraining.run.id}/instructor-review`,
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            rating: $('instructor-rating').value,
+            observation: $('instructor-observation').value
+          })
+        }
+      );
+      const payload = await response.json();
+      renderTrainingRun(payload);
+      $('instructor-review-status').textContent = `Review saved: ${payload.review.rating}`;
     }
 
     async function closeCase() {
@@ -2894,6 +3183,7 @@ def _render_workbench_app() -> str:
     $('training-hint').addEventListener('click', requestHint);
     $('training-export-json').addEventListener('click', () => exportTrainingEvidence('json'));
     $('training-export-md').addEventListener('click', () => exportTrainingEvidence('md'));
+    $('instructor-review-save').addEventListener('click', saveInstructorReview);
     $('case-start').addEventListener('click', startCaseRun);
     $('case-tick').addEventListener('click', tickCaseRun);
     $('case-export-json').addEventListener('click', () => exportCaseEvidence('json'));
@@ -3085,6 +3375,19 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
                         int(parts[2]),
                         str(payload.get("checkpoint_id", "")),
                         bool(payload.get("completed", True)),
+                    )
+                )
+                return
+            if parsed.path.startswith("/api/training/") and parsed.path.endswith(
+                "/instructor-review"
+            ):
+                parts = parsed.path.strip("/").split("/")
+                payload = self._read_json_body()
+                self._send_json(
+                    save_instructor_review(
+                        int(parts[2]),
+                        str(payload.get("rating", "Developing")),
+                        str(payload.get("observation", "")),
                     )
                 )
                 return

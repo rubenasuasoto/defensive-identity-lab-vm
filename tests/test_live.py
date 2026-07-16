@@ -15,6 +15,7 @@ from identitylab.live import (
     request_training_hint,
     reset_run,
     reset_runtime,
+    save_instructor_review,
     scenario_index,
     scenario_to_dict,
     start_case_run,
@@ -60,13 +61,15 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "rule evaluation" in html
     assert "reset runtime state" in html
     assert "case run" in html
-    assert "training mode" in html
+    assert "instructor mode v0.6.0" in html
     assert "workbench views" in html
     assert "data-view-panel=\"overview\"" in html
     assert "data-view-panel=\"incidents\"" in html
     assert "guided case investigation" in html
     assert "learning objectives" in html
     assert "guided steps" in html
+    assert "instructor assessment" in html
+    assert "instructor review" in html
     assert "hint" in html
     assert "feedback" in html
     assert "analyst tasks" in html
@@ -260,9 +263,14 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     case_run_id = int(state["case_run"]["run"]["id"])
 
     assert state["module"]["case_id"] == "CASE-001"
+    assert state["module"]["instructor_brief"]
+    assert len(state["module"]["assessment"]) == 4
     assert state["run"]["status"] == "In progress"
     assert len(state["checkpoints"]) == 5
     assert state["feedback"].startswith("Keep investigating")
+    assert state["instructor"]["mode"] == "Instructor Mode"
+    assert state["instructor"]["version"] == "0.6.0"
+    assert state["instructor"]["score"] == 0
 
     state = update_training_checkpoint(
         training_run_id,
@@ -278,6 +286,22 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     state = request_training_hint(training_run_id, db_path)
     assert state["latest_hint"]
     assert len(state["hints"]) == 1
+    assert state["instructor"]["hints_used"] == 1
+
+    for checkpoint in state["checkpoints"]:
+        state = update_training_checkpoint(
+            training_run_id,
+            str(checkpoint["checkpoint_id"]),
+            True,
+            db_path,
+        )
+    for task in state["case_run"]["tasks"]:
+        update_case_task(
+            case_run_id,
+            str(task["task_id"]),
+            True,
+            db_path,
+        )
 
     for _ in range(8):
         tick_case_run(case_run_id, db_path)
@@ -286,9 +310,15 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     state = training_run_detail(training_run_id, db_path)
     assert state["run"]["status"] == "Completed"
     assert "Good call" in state["feedback"]
+    assert state["instructor"]["score"] >= 4
+    assert state["instructor"]["readiness"] in {
+        "Developing",
+        "Ready for independent review",
+    }
 
     markdown = training_evidence_markdown(training_run_id, db_path)
     assert "Training evidence: TRAIN-001" in markdown
+    assert "Instructor assessment" in markdown
     assert "Learning objectives" in markdown
     assert "Correlated identity activity" in markdown or "Good call" in markdown
 
@@ -304,3 +334,24 @@ def test_training_feedback_corrects_benign_close(tmp_path: Path) -> None:
 
     assert state["run"]["status"] == "Completed"
     assert "Review needed" in state["feedback"]
+    assert state["instructor"]["readiness"] == "Needs corrective review"
+
+
+def test_instructor_review_is_persistent(tmp_path: Path) -> None:
+    db_path = tmp_path / "live.sqlite"
+    state = start_training_run("TRAIN-001", db_path)
+    training_run_id = int(state["run"]["id"])
+
+    state = save_instructor_review(
+        training_run_id,
+        "Developing",
+        "Good timeline review; needs a clearer decision note.",
+        db_path,
+    )
+
+    assert state["review"]["rating"] == "Developing"
+    assert state["review"]["observation"] == (
+        "Good timeline review; needs a clearer decision note."
+    )
+    assert training_run_detail(training_run_id, db_path)["review"]["rating"] == "Developing"
+    assert "Instructor review" in training_evidence_markdown(training_run_id, db_path)

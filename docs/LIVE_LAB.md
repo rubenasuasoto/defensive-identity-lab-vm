@@ -67,7 +67,7 @@ New, Investigating, Benign, Suspicious, Escalated, Closed
 
 The case remains local in `live_lab.sqlite` until `Reset runtime state` is used.
 
-## Training Mode
+## Instructor Mode v0.6.0
 
 `TRAIN-001` teaches the same `CASE-001` workflow for beginner SOC analysts. It adds:
 
@@ -75,7 +75,9 @@ The case remains local in `live_lab.sqlite` until `Reset runtime state` is used.
 - Guided steps that can be checked off during the investigation.
 - Progressive hints that nudge the learner without revealing everything at once.
 - Feedback when the linked case is closed.
-- JSON or Markdown training evidence export.
+- Automatic instructor assessment with score, readiness and recommendation.
+- Persistent instructor review rating and observation.
+- JSON or Markdown instructor evidence export.
 
 Expected decisions are `Suspicious` or `Escalated`. Closing as `Benign` produces corrective feedback because the correlated cloud and endpoint evidence should be investigated.
 

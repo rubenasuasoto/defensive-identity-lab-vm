@@ -112,8 +112,9 @@ The Live Lab also includes `CASE-001`, a guided SOC-style case run with benign
 noise, an alertable cross-source identity incident, analyst tasks, case closure
 and JSON/Markdown evidence export.
 
-Training Mode adds `TRAIN-001`, a beginner-friendly lesson with learning
-objectives, guided steps, progressive hints, feedback and evidence export.
+Instructor Mode v0.6.0 adds `TRAIN-001`, a beginner-friendly lesson with
+learning objectives, guided steps, progressive hints, automatic instructor
+assessment, persistent instructor review notes and evidence export.
 
 Remove it with:
 
