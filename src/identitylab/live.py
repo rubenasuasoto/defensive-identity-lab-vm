@@ -67,6 +67,7 @@ class TrainingModule:
     expected_decisions: list[str]
     assessment: list[dict[str, object]]
     learning_flow: list[dict[str, str]]
+    questions: list[dict[str, object]]
 
 
 SCENARIOS: list[LiveScenario] = [
@@ -388,19 +389,19 @@ TRAINING_MODULES: list[TrainingModule] = [
         guided_steps=[
             {
                 "step_id": "observe-noise",
-                "label": "Identify at least one benign event in the timeline.",
+                "label": "Correctly identify unrelated benign activity.",
             },
             {
                 "step_id": "find-signal",
-                "label": "Find the account and IP shared by the alertable events.",
+                "label": "Correctly correlate the shared account and IP.",
             },
             {
                 "step_id": "review-rule",
-                "label": "Explain why the rule evaluation changes to Alert.",
+                "label": "Correctly explain the alert condition.",
             },
             {
                 "step_id": "complete-tasks",
-                "label": "Complete the analyst task checklist.",
+                "label": "Choose the appropriate triage action.",
             },
             {
                 "step_id": "close-case",
@@ -424,14 +425,9 @@ TRAINING_MODULES: list[TrainingModule] = [
         expected_decisions=["Suspicious", "Escalated"],
         assessment=[
             {
-                "name": "Guided checkpoints",
-                "max_points": 4,
-                "description": "Learner completes the investigation checkpoints.",
-            },
-            {
-                "name": "Analyst tasks",
-                "max_points": 2,
-                "description": "Learner completes the case task checklist.",
+                "name": "Analyst decisions",
+                "max_points": 6,
+                "description": "Learner makes defensible decisions from the evidence.",
             },
             {
                 "name": "Evidence recognition",
@@ -481,8 +477,9 @@ TRAINING_MODULES: list[TrainingModule] = [
                 "flow_id": "triage",
                 "title": "Complete the triage",
                 "instruction": (
-                    "Work through the analyst checklist. Record the account, source IP, host, "
-                    "MFA context and cross-source correlation before you decide."
+                    "Choose the next defensible analyst action from the evidence. Record the "
+                    "account, source IP, host, MFA context and cross-source correlation "
+                    "before you decide."
                 ),
             },
             {
@@ -499,6 +496,145 @@ TRAINING_MODULES: list[TrainingModule] = [
                 "instruction": (
                     "Review your feedback and assessment. Facilitator notes remain unavailable "
                     "until the case has been closed."
+                ),
+            },
+        ],
+        questions=[
+            {
+                "question_id": "identify-benign",
+                "flow_id": "timeline",
+                "checkpoint_id": "observe-noise",
+                "minimum_events": 4,
+                "prompt": (
+                    "Which revealed event is unrelated benign context for this "
+                    "investigation?"
+                ),
+                "options": [
+                    {
+                        "value": "service-failure",
+                        "label": "t+4 SecurityEvent: single svc-backup failure from 192.0.2.20.",
+                    },
+                    {
+                        "value": "risky-sign-in",
+                        "label": "t+9 SigninLogs: high-risk sign-in for alex.morgan.",
+                    },
+                    {
+                        "value": "group-update",
+                        "label": "t+13 AuditLogs: expected helpdesk group update.",
+                    },
+                ],
+                "correct_answer": "service-failure",
+                "feedback_correct": (
+                    "Correct. The service account is unrelated to the shared account "
+                    "and IP correlation."
+                ),
+                "feedback_retry": (
+                    "Not yet. Compare each event with the account and IP that later "
+                    "form the incident."
+                ),
+            },
+            {
+                "question_id": "correlate-entities",
+                "flow_id": "entities",
+                "checkpoint_id": "find-signal",
+                "minimum_events": 4,
+                "prompt": "Which account and IP pair connects the cloud and Windows evidence?",
+                "options": [
+                    {
+                        "value": "alex-shared-ip",
+                        "label": "alex.morgan and 203.0.113.42",
+                    },
+                    {
+                        "value": "nora-known-ip",
+                        "label": "nora.patel and 198.51.100.31",
+                    },
+                    {
+                        "value": "helpdesk-ip",
+                        "label": "helpdesk.admin and 198.51.100.44",
+                    },
+                ],
+                "correct_answer": "alex-shared-ip",
+                "feedback_correct": (
+                    "Correct. The account key and source IP are the cross-source pivot "
+                    "for this case."
+                ),
+                "feedback_retry": (
+                    "Not yet. Focus on the values that appear in both Entra and "
+                    "SecurityEvent records."
+                ),
+            },
+            {
+                "question_id": "explain-rule",
+                "flow_id": "rule",
+                "checkpoint_id": "review-rule",
+                "requires_alert": True,
+                "prompt": "Which sequence explains why SENT-006 alerts?",
+                "options": [
+                    {
+                        "value": "correlated-sequence",
+                        "label": (
+                            "High-risk Entra sign-in, repeated Windows failures, then a "
+                            "Windows success for the shared identity and IP."
+                        ),
+                    },
+                    {
+                        "value": "single-event",
+                        "label": (
+                            "Any single failed Windows logon is sufficient for a "
+                            "cross-source incident."
+                        ),
+                    },
+                    {
+                        "value": "benign-noise",
+                        "label": "The unrelated service failure is the main cause of the alert.",
+                    },
+                ],
+                "correct_answer": "correlated-sequence",
+                "feedback_correct": (
+                    "Correct. The alert depends on the ordered, cross-source correlation "
+                    "rather than one isolated event."
+                ),
+                "feedback_retry": (
+                    "Not yet. Wait for Alert, then compare the evaluator reason with "
+                    "the event sequence."
+                ),
+            },
+            {
+                "question_id": "choose-triage",
+                "flow_id": "triage",
+                "checkpoint_id": "complete-tasks",
+                "prompt": (
+                    "What is the best next analyst action before closing this synthetic "
+                    "case?"
+                ),
+                "options": [
+                    {
+                        "value": "document-correlation",
+                        "label": (
+                            "Document the account, shared IP, host and cloud risk context, "
+                            "then make a reasoned decision."
+                        ),
+                    },
+                    {
+                        "value": "mark-all-benign",
+                        "label": (
+                            "Mark every timeline event benign because some are expected "
+                            "activity."
+                        ),
+                    },
+                    {
+                        "value": "change-host",
+                        "label": "Make a change to the workstation before recording the evidence.",
+                    },
+                ],
+                "correct_answer": "document-correlation",
+                "feedback_correct": (
+                    "Correct. Evidence-led documentation comes before a defensible "
+                    "decision in this local lab."
+                ),
+                "feedback_retry": (
+                    "Not yet. Separate the benign context from the correlated evidence "
+                    "and preserve that reasoning in the case note."
                 ),
             },
         ],
@@ -760,6 +896,19 @@ def init_store(db_path: Path = LIVE_DB) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS training_answers (
+                training_run_id INTEGER NOT NULL,
+                question_id TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                correct INTEGER NOT NULL,
+                attempts INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (training_run_id, question_id)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS instructor_reviews (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 training_run_id INTEGER NOT NULL UNIQUE,
@@ -948,9 +1097,7 @@ def incident_entities(
 ) -> dict[str, list[str]]:
     def unique(field: str) -> list[str]:
         values = {
-            str(event.get(field, "-"))
-            for event in events
-            if str(event.get(field, "-")) != "-"
+            str(event.get(field, "-")) for event in events if str(event.get(field, "-")) != "-"
         }
         return sorted(values)
 
@@ -1013,23 +1160,25 @@ def reset_runtime(db_path: Path = LIVE_DB) -> dict[str, object]:
             "run_state": connection.execute("SELECT COUNT(*) FROM run_state").fetchone()[0],
             "case_runs": connection.execute("SELECT COUNT(*) FROM case_runs").fetchone()[0],
             "case_tasks": connection.execute("SELECT COUNT(*) FROM case_tasks").fetchone()[0],
-            "training_runs": connection.execute(
-                "SELECT COUNT(*) FROM training_runs"
-            ).fetchone()[0],
+            "training_runs": connection.execute("SELECT COUNT(*) FROM training_runs").fetchone()[0],
             "training_checkpoints": connection.execute(
                 "SELECT COUNT(*) FROM training_checkpoints"
             ).fetchone()[0],
-            "training_hints": connection.execute(
-                "SELECT COUNT(*) FROM training_hints"
-            ).fetchone()[0],
+            "training_hints": connection.execute("SELECT COUNT(*) FROM training_hints").fetchone()[
+                0
+            ],
             "training_progress": connection.execute(
                 "SELECT COUNT(*) FROM training_progress"
+            ).fetchone()[0],
+            "training_answers": connection.execute(
+                "SELECT COUNT(*) FROM training_answers"
             ).fetchone()[0],
             "instructor_reviews": connection.execute(
                 "SELECT COUNT(*) FROM instructor_reviews"
             ).fetchone()[0],
         }
         connection.execute("DELETE FROM instructor_reviews")
+        connection.execute("DELETE FROM training_answers")
         connection.execute("DELETE FROM training_progress")
         connection.execute("DELETE FROM training_hints")
         connection.execute("DELETE FROM training_checkpoints")
@@ -1249,16 +1398,21 @@ def training_run_detail(
     module = _require_training_module(str(row["module_id"]))
     case_detail = case_run_detail(int(row["case_run_id"]), db_path)
     checkpoints = _load_training_checkpoints(training_run_id, db_path)
+    answers = _load_training_answers(training_run_id, db_path)
     hints = _load_training_hints(training_run_id, db_path)
     guide = _training_guide(
         module,
         _load_training_progress(training_run_id, db_path),
+        checkpoints,
+        case_detail,
     )
     return {
         "run": row,
         "module": training_to_dict(module),
         "case_run": case_detail,
         "checkpoints": checkpoints,
+        "questions": _training_questions_for_detail(module, answers),
+        "answers": answers,
         "hints": hints,
         "guide": guide,
         "feedback": _training_feedback(row, case_detail, module),
@@ -1267,6 +1421,7 @@ def training_run_detail(
             case_detail,
             module,
             checkpoints,
+            answers,
             hints,
         ),
         "review": _load_instructor_review(training_run_id, db_path),
@@ -1312,7 +1467,10 @@ def set_training_guide_step(
     if run is None:
         raise ValueError(f"Unknown training run: {training_run_id}")
     module = _require_training_module(str(run["module_id"]))
-    clean_index = max(0, min(step_index, len(module.learning_flow) - 1))
+    case_detail = case_run_detail(int(run["case_run_id"]), db_path)
+    checkpoints = _load_training_checkpoints(training_run_id, db_path)
+    maximum_step = _maximum_training_step(module, checkpoints, case_detail)
+    clean_index = max(0, min(step_index, maximum_step))
     with sqlite3.connect(db_path) as connection:
         connection.execute(
             """
@@ -1324,6 +1482,73 @@ def set_training_guide_step(
             """,
             (training_run_id, clean_index, _now()),
         )
+    return training_run_detail(training_run_id, db_path)
+
+
+def submit_training_answer(
+    training_run_id: int,
+    question_id: str,
+    answer: str,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    run = _load_training_run(training_run_id, db_path)
+    if run is None:
+        raise ValueError(f"Unknown training run: {training_run_id}")
+    module = _require_training_module(str(run["module_id"]))
+    question = _training_question(module, question_id)
+    if question is None:
+        raise ValueError(f"Unknown training question: {question_id}")
+    question_step = next(
+        index
+        for index, step in enumerate(module.learning_flow)
+        if step["flow_id"] == question["flow_id"]
+    )
+    if _load_training_progress(training_run_id, db_path) < question_step:
+        raise ValueError("Continue to the relevant guided screen before answering.")
+    case_detail = case_run_detail(int(run["case_run_id"]), db_path)
+    minimum_events = int(question.get("minimum_events", 0))
+    if case_detail["event_count"] < minimum_events:
+        raise ValueError("Reveal more timeline events before answering this question.")
+    if question.get("requires_alert") and case_detail["evaluation"]["status"] != "Alert":
+        raise ValueError("Reach the Alert state before answering this question.")
+    clean_answer = answer.strip()
+    options = question["options"]
+    if clean_answer not in {str(option["value"]) for option in options}:
+        raise ValueError("Answer must be one of the available options.")
+    correct = clean_answer == question["correct_answer"]
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        previous = connection.execute(
+            """
+            SELECT attempts FROM training_answers
+            WHERE training_run_id = ? AND question_id = ?
+            """,
+            (training_run_id, question_id),
+        ).fetchone()
+        attempts = int(previous[0]) + 1 if previous is not None else 1
+        connection.execute(
+            """
+            INSERT INTO training_answers (
+              training_run_id, question_id, answer, correct, attempts, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(training_run_id, question_id) DO UPDATE SET
+              answer = excluded.answer,
+              correct = excluded.correct,
+              attempts = excluded.attempts,
+              updated_at = excluded.updated_at
+            """,
+            (training_run_id, question_id, clean_answer, 1 if correct else 0, attempts, _now()),
+        )
+        if correct:
+            connection.execute(
+                """
+                UPDATE training_checkpoints
+                SET completed = 1, updated_at = ?
+                WHERE training_run_id = ? AND checkpoint_id = ?
+                """,
+                (str(_now()), training_run_id, str(question["checkpoint_id"])),
+            )
     return training_run_detail(training_run_id, db_path)
 
 
@@ -1387,8 +1612,7 @@ def training_evidence_markdown(
         f"- Audience: {module['audience']}",
         f"- Status: {run['status']}",
         f"- Feedback: {detail['feedback']}",
-        f"- Training score: {detail['instructor']['score']} / "
-        f"{detail['instructor']['max_score']}",
+        f"- Training score: {detail['instructor']['score']} / {detail['instructor']['max_score']}",
         f"- Training readiness: {detail['instructor']['readiness']}",
         (
             f"- Guided step: {detail['guide']['current_step'] + 1} / "
@@ -1400,10 +1624,12 @@ def training_evidence_markdown(
     ]
     for objective in module["objectives"]:
         lines.append(f"- {objective}")
-    lines.extend(["", "## Guided steps", ""])
-    for checkpoint in detail["checkpoints"]:
-        status = "done" if checkpoint["completed"] else "open"
-        lines.append(f"- [{status}] {checkpoint['label']}")
+    lines.extend(["", "## Learner decisions", ""])
+    for question in detail["questions"]:
+        status = "correct" if question["correct"] else "open"
+        if question["answered"] and not question["correct"]:
+            status = "retry needed"
+        lines.append(f"- [{status}] {question['prompt']} (attempts: {question['attempts']})")
     lines.extend(["", "## Hints used", ""])
     if detail["hints"]:
         for hint in detail["hints"]:
@@ -1549,9 +1775,7 @@ def evidence_markdown(
         if notes:
             lines.extend(["", "## Analyst notes", ""])
             for item in notes:
-                lines.append(
-                    f"- {item['created_at']} [{item['status']}]: {item['note']}"
-                )
+                lines.append(f"- {item['created_at']} [{item['status']}]: {item['note']}")
     lines.extend(["", "## Scope", "", SCOPE_WARNING, ""])
     return "\n".join(lines)
 
@@ -1664,9 +1888,7 @@ def _evaluate_and_store_case_incident(
 
 def _evaluate_sent_006(events: list[dict[str, object]]) -> dict[str, object]:
     risky = [
-        event
-        for event in events
-        if event["table"] == "SigninLogs" and event["result"] == "success"
+        event for event in events if event["table"] == "SigninLogs" and event["result"] == "success"
     ]
     failures = [event for event in events if _is_windows_result(event, "failure")]
     successes = [event for event in events if _is_windows_result(event, "success")]
@@ -1707,9 +1929,7 @@ def _evaluate_entra_003(events: list[dict[str, object]]) -> dict[str, object]:
         if event["table"] == "SigninLogs" and event["result"] == "mfa_denied"
     ]
     successes = [
-        event
-        for event in events
-        if event["table"] == "SigninLogs" and event["result"] == "success"
+        event for event in events if event["table"] == "SigninLogs" and event["result"] == "success"
     ]
     for success in successes:
         related_denials = [
@@ -1876,10 +2096,7 @@ def _load_notes(incident_id: int, db_path: Path) -> list[dict[str, object]]:
             """,
             (incident_id,),
         ).fetchall()
-    return [
-        {"id": row[0], "status": row[1], "note": row[2], "created_at": row[3]}
-        for row in rows
-    ]
+    return [{"id": row[0], "status": row[1], "note": row[2], "created_at": row[3]} for row in rows]
 
 
 def _load_case_run(case_run_id: int, db_path: Path) -> dict[str, object] | None:
@@ -2003,6 +2220,74 @@ def _load_training_checkpoints(
     ]
 
 
+def _load_training_answers(
+    training_run_id: int,
+    db_path: Path,
+) -> list[dict[str, object]]:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT question_id, answer, correct, attempts, updated_at
+            FROM training_answers
+            WHERE training_run_id = ?
+            ORDER BY question_id
+            """,
+            (training_run_id,),
+        ).fetchall()
+    return [
+        {
+            "question_id": row[0],
+            "answer": row[1],
+            "correct": bool(row[2]),
+            "attempts": row[3],
+            "updated_at": row[4],
+        }
+        for row in rows
+    ]
+
+
+def _training_question(
+    module: TrainingModule,
+    question_id: str,
+) -> dict[str, object] | None:
+    return next(
+        (question for question in module.questions if question["question_id"] == question_id),
+        None,
+    )
+
+
+def _training_questions_for_detail(
+    module: TrainingModule,
+    answers: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    answers_by_id = {str(answer["question_id"]): answer for answer in answers}
+    questions: list[dict[str, object]] = []
+    for question in module.questions:
+        answer = answers_by_id.get(str(question["question_id"]))
+        questions.append(
+            {
+                "question_id": question["question_id"],
+                "flow_id": question["flow_id"],
+                "prompt": question["prompt"],
+                "options": question["options"],
+                "minimum_events": question.get("minimum_events", 0),
+                "requires_alert": bool(question.get("requires_alert", False)),
+                "answered": answer is not None,
+                "correct": bool(answer and answer["correct"]),
+                "attempts": int(answer["attempts"]) if answer else 0,
+                "feedback": (
+                    question["feedback_correct"]
+                    if answer and answer["correct"]
+                    else question["feedback_retry"]
+                    if answer
+                    else ""
+                ),
+            }
+        )
+    return questions
+
+
 def _load_training_hints(
     training_run_id: int,
     db_path: Path,
@@ -2041,12 +2326,19 @@ def _load_training_progress(training_run_id: int, db_path: Path) -> int:
     return int(row[0]) if row is not None else 0
 
 
-def _training_guide(module: TrainingModule, current_step: int) -> dict[str, object]:
+def _training_guide(
+    module: TrainingModule,
+    current_step: int,
+    checkpoints: list[dict[str, object]],
+    case_detail: dict[str, object],
+) -> dict[str, object]:
     steps = module.learning_flow
-    clean_index = max(0, min(current_step, len(steps) - 1))
+    maximum_step = _maximum_training_step(module, checkpoints, case_detail)
+    clean_index = max(0, min(current_step, maximum_step))
     return {
         "current_step": clean_index,
         "total_steps": len(steps),
+        "maximum_step": maximum_step,
         "current": steps[clean_index],
         "steps": [
             {
@@ -2057,12 +2349,32 @@ def _training_guide(module: TrainingModule, current_step: int) -> dict[str, obje
                     if index == clean_index
                     else "complete"
                     if index < clean_index
+                    else "locked"
+                    if index > maximum_step
                     else "upcoming"
                 ),
             }
             for index, step in enumerate(steps)
         ],
     }
+
+
+def _maximum_training_step(
+    module: TrainingModule,
+    checkpoints: list[dict[str, object]],
+    case_detail: dict[str, object],
+) -> int:
+    completed = {
+        str(checkpoint["checkpoint_id"]) for checkpoint in checkpoints if checkpoint["completed"]
+    }
+    maximum_step = 1
+    for index, question in enumerate(module.questions, start=1):
+        if str(question["checkpoint_id"]) not in completed:
+            return min(maximum_step, len(module.learning_flow) - 1)
+        maximum_step = index + 1
+    if case_detail["run"]["status"] == "Closed":
+        maximum_step = len(module.learning_flow) - 1
+    return min(maximum_step, len(module.learning_flow) - 1)
 
 
 def _load_instructor_review(
@@ -2102,10 +2414,21 @@ def _complete_training_for_case(case_run_id: int, db_path: Path) -> None:
     for row in rows:
         training_run_id = int(row[0])
         detail = training_run_detail(training_run_id, db_path)
-        feedback = _training_feedback(detail["run"], detail["case_run"], _require_training_module(
-            str(detail["run"]["module_id"])
-        ))
+        module = _require_training_module(str(detail["run"]["module_id"]))
+        case_detail = detail["case_run"]
+        decision = str(case_detail["run"].get("decision") or "")
+        note = str(case_detail["run"].get("decision_note") or "").strip()
+        feedback = _training_feedback(detail["run"], case_detail, module)
         with sqlite3.connect(db_path) as connection:
+            if decision in module.expected_decisions and note:
+                connection.execute(
+                    """
+                    UPDATE training_checkpoints
+                    SET completed = 1, updated_at = ?
+                    WHERE training_run_id = ? AND checkpoint_id = 'close-case'
+                    """,
+                    (_now(), training_run_id),
+                )
             connection.execute(
                 """
                 UPDATE training_runs
@@ -2121,20 +2444,18 @@ def _training_instructor_summary(
     case_detail: dict[str, object],
     module: TrainingModule,
     checkpoints: list[dict[str, object]],
+    answers: list[dict[str, object]],
     hints: list[dict[str, object]],
 ) -> dict[str, object]:
-    checkpoint_total = len(checkpoints)
-    checkpoint_done = sum(1 for checkpoint in checkpoints if checkpoint["completed"])
-    task_total = len(case_detail["tasks"])
-    task_done = sum(1 for task in case_detail["tasks"] if task["completed"])
+    question_total = len(module.questions)
+    question_done = sum(1 for answer in answers if answer["correct"])
     event_total = int(case_detail["case"]["event_total"])
     event_count = int(case_detail["event_count"])
     incident = case_detail["incident"]
     decision = str(case_detail["run"].get("decision") or "")
     expected = decision in module.expected_decisions
 
-    checkpoint_points = _fractional_points(checkpoint_done, checkpoint_total, 4)
-    task_points = _fractional_points(task_done, task_total, 2)
+    decision_reasoning_points = _fractional_points(question_done, question_total, 6)
     evidence_points = 0
     if event_count >= event_total:
         evidence_points += 1
@@ -2147,7 +2468,7 @@ def _training_instructor_summary(
     else:
         decision_points = 0
 
-    score = round(checkpoint_points + task_points + evidence_points + decision_points, 1)
+    score = round(decision_reasoning_points + evidence_points + decision_points, 1)
     if score >= 8 and expected:
         readiness = "Ready for independent review"
         recommendation = "Debrief the decision note, then move to an unguided scenario."
@@ -2156,23 +2477,17 @@ def _training_instructor_summary(
         recommendation = "Review why benign noise does not cancel the correlated alert evidence."
     elif score >= 5 or expected:
         readiness = "Developing"
-        recommendation = "Continue coaching on incomplete checkpoints or case tasks."
+        recommendation = "Continue coaching on the unanswered evidence decisions."
     else:
         readiness = "Needs guided practice"
         recommendation = "Continue the guided training path and complete each evidence step."
 
     criteria = [
         {
-            "name": "Guided checkpoints",
-            "points": checkpoint_points,
-            "max_points": 4,
-            "status": f"{checkpoint_done}/{checkpoint_total} complete",
-        },
-        {
-            "name": "Analyst tasks",
-            "points": task_points,
-            "max_points": 2,
-            "status": f"{task_done}/{task_total} complete",
+            "name": "Analyst decisions",
+            "points": decision_reasoning_points,
+            "max_points": 6,
+            "status": f"{question_done}/{question_total} correct",
         },
         {
             "name": "Evidence recognition",
@@ -2191,7 +2506,7 @@ def _training_instructor_summary(
     ]
     return {
         "mode": "Guided Training",
-        "version": "0.7.0",
+        "version": "0.8.0",
         "score": score,
         "max_score": 10,
         "readiness": readiness,
@@ -2219,8 +2534,7 @@ def _training_feedback(
     decision = str(case_detail["run"].get("decision") or "")
     if not decision:
         return (
-            "Keep investigating: review the timeline, entities and rule evaluation "
-            "before closing."
+            "Keep investigating: review the timeline, entities and rule evaluation before closing."
         )
     if decision in module.expected_decisions:
         return "Good call: the decision matches the correlated identity evidence in this lesson."
@@ -2419,6 +2733,16 @@ def _render_workbench_app() -> str:
     .guide-nav { display: flex; gap: 8px; flex-wrap: wrap; }
     .guide-nav button { min-width: 120px; }
     .guide-solution { border-left: 4px solid var(--ok); padding-left: 12px; }
+    .guide-question {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+    .guide-options { display: grid; gap: 8px; }
+    .guide-options label { display: flex; gap: 8px; align-items: flex-start; }
+    .guide-question-feedback { margin: 0; min-height: 1.4em; }
     .case-grid .wide { grid-column: 1 / -1; }
     .event-list {
       display: grid;
@@ -3120,17 +3444,38 @@ def _render_workbench_app() -> str:
         : '';
     }
 
-    function trainingCheckpointControl(payload, checkpointId) {
-      const checkpoint = payload.checkpoints.find((item) => item.checkpoint_id === checkpointId);
-      if (!checkpoint) return '';
-      return `<label><input type="checkbox" data-training-checkpoint="${h(checkpointId)}" ` +
-        `${checkpoint.completed ? 'checked' : ''}> ${h(checkpoint.label)}</label>`;
-    }
-
     function trainingEntities(entities) {
       const groups = ['accounts', 'ips', 'hosts', 'sources', 'tables'];
       return groups.map((group) => `<div><strong>${h(group)}</strong><br>` +
         `${h((entities[group] || []).join(', ') || '-')}</div>`).join('');
+    }
+
+    function trainingQuestionControl(payload, flowId) {
+      const question = payload.questions.find((item) => item.flow_id === flowId);
+      if (!question) return '';
+      const enoughEvents = payload.case_run.event_count >= question.minimum_events;
+      const alertReady = !question.requires_alert || payload.case_run.evaluation.status === 'Alert';
+      const ready = enoughEvents && alertReady;
+      const state = question.correct
+        ? 'Correct decision recorded.'
+        : question.answered
+        ? question.feedback
+        : ready
+        ? 'Choose the answer you can support from the evidence shown here.'
+        : question.requires_alert
+        ? 'Continue the timeline until the evaluator reaches Alert before answering.'
+        : `Reveal at least ${question.minimum_events} timeline events before answering.`;
+      return `<div class="guide-question"><strong>${h(question.prompt)}</strong>` +
+        `<div class="guide-options">${question.options.map((option) =>
+          `<label><input type="radio" name="training-question-${h(question.question_id)}" ` +
+          `value="${h(option.value)}" ${!ready || question.correct ? 'disabled' : ''}> ` +
+          `${h(option.label)}</label>`
+        ).join('')}</div>` +
+        `<button data-training-answer="${h(question.question_id)}" ` +
+        `${!ready || question.correct ? 'disabled' : ''}>Check reasoning</button>` +
+        `<p class="guide-question-feedback ` +
+        `${question.correct ? 'ok-text' : question.answered ? 'alert-text' : ''}">` +
+        `${h(state)}</p></div>`;
     }
 
     function renderTrainingGuide(payload) {
@@ -3146,7 +3491,7 @@ def _render_workbench_app() -> str:
       $('training-step-title').textContent = step.title;
       $('training-step-instruction').textContent = step.instruction;
       $('training-back').disabled = guide.current_step === 0;
-      $('training-next').disabled = guide.current_step >= guide.total_steps - 1;
+      $('training-next').disabled = guide.current_step >= guide.maximum_step;
       const nextStep = guide.steps[guide.current_step + 1];
       $('training-next').textContent = nextStep
         ? `Continue: ${nextStep.title}`
@@ -3166,33 +3511,34 @@ def _render_workbench_app() -> str:
           `<div class="event-list">${caseRun.events.length ? caseRun.events.map((event) =>
             `<div><strong>t+${h(event.offset)}s ${h(event.table)}</strong><br>` +
             `${h(event.detail)}<br>` +
-            `<small>${h(event.classification)} | ${h(event.severity)}</small></div>`
+            `<small>${h(event.source)} | ${h(event.severity)}</small></div>`
           ).join('') : '<div>No events revealed yet.</div>'}</div>` +
-          trainingCheckpointControl(payload, 'observe-noise');
+          trainingQuestionControl(payload, 'timeline');
       } else if (step.flow_id === 'entities') {
         content = `<div class="kv">${trainingEntities(caseRun.entities || {})}</div>` +
-          trainingCheckpointControl(payload, 'find-signal');
+          trainingQuestionControl(payload, 'entities');
       } else if (step.flow_id === 'rule') {
         const evaluatorReason = caseRun.evaluation.reason || 'Keep revealing events.';
         const matchedFields = (caseRun.evaluation.matched_fields || []).join(' | ') || '-';
-        content = `<div><strong>Evaluator state:</strong> ` +
+        const revealControl = caseRun.evaluation.status !== 'Alert' && !caseRun.complete
+          ? '<button id="training-case-tick" class="primary">Reveal next event</button>'
+          : '';
+        content = revealControl + `<div><strong>Evaluator state:</strong> ` +
           `${h(caseRun.evaluation.status)}</div>` +
           `<div><strong>Why:</strong><br>${h(evaluatorReason)}</div>` +
           `<div><strong>Matched fields:</strong><br>${h(matchedFields)}</div>` +
-          trainingCheckpointControl(payload, 'review-rule');
+          trainingQuestionControl(payload, 'rule');
       } else if (step.flow_id === 'triage') {
-        content = `<div class="kv">${caseRun.tasks.map((task) =>
-          `<div><label><input type="checkbox" data-training-task="${h(task.task_id)}" ` +
-          `${task.completed ? 'checked' : ''}> ${h(task.label)}</label></div>`
-        ).join('')}</div>` + trainingCheckpointControl(payload, 'complete-tasks');
+        content = `<div><strong>Evidence available:</strong> ${h(caseRun.event_count)} events | ` +
+          `${h(caseRun.evaluation.status)} evaluator state.</div>` +
+          trainingQuestionControl(payload, 'triage');
       } else if (step.flow_id === 'close') {
         content = `<select id="training-case-decision"><option>Suspicious</option>` +
           `<option>Escalated</option><option>Benign</option><option>Closed</option></select>` +
           `<textarea id="training-case-note" ` +
           `placeholder="Explain the evidence behind your decision"></textarea>` +
           `<button id="training-case-close" class="primary">Close guided case</button>` +
-          `<p id="training-case-close-status"></p>` +
-          trainingCheckpointControl(payload, 'close-case');
+          `<p id="training-case-close-status"></p>`;
       } else {
         content = caseRun.run.status === 'Closed'
           ? '<div><strong>Case closed.</strong> Review your score, feedback and ' +
@@ -3200,16 +3546,9 @@ def _render_workbench_app() -> str:
           : '<div>Close the case in the previous step to unlock the complete outcome.</div>';
       }
       $('training-step-content').innerHTML = content;
-      document.querySelectorAll('[data-training-checkpoint]').forEach((checkbox) => {
-        checkbox.addEventListener('change', () => updateTrainingCheckpoint(
-          checkbox.dataset.trainingCheckpoint,
-          checkbox.checked
-        ));
-      });
-      document.querySelectorAll('[data-training-task]').forEach((checkbox) => {
-        checkbox.addEventListener('change', () => updateCaseTask(
-          checkbox.dataset.trainingTask,
-          checkbox.checked
+      document.querySelectorAll('[data-training-answer]').forEach((button) => {
+        button.addEventListener('click', () => submitTrainingAnswer(
+          button.dataset.trainingAnswer
         ));
       });
       const tickButton = $('training-case-tick');
@@ -3323,6 +3662,28 @@ def _render_workbench_app() -> str:
         body: JSON.stringify({checkpoint_id: checkpointId, completed})
       });
       renderTrainingRun(await response.json());
+    }
+
+    async function submitTrainingAnswer(questionId) {
+      if (!state.activeTraining) return;
+      const selected = document.querySelector(
+        `input[name="training-question-${questionId}"]:checked`
+      );
+      if (!selected) {
+        $('training-hint-output').textContent = 'Choose an answer before checking your reasoning.';
+        return;
+      }
+      const response = await fetch(`/api/training/${state.activeTraining.run.id}/answer`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({question_id: questionId, answer: selected.value})
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        $('training-hint-output').textContent = payload.error || 'The answer could not be checked.';
+        return;
+      }
+      renderTrainingRun(payload);
     }
 
     async function moveTrainingGuide(delta) {
@@ -3683,13 +4044,20 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/training/start":
                 payload = self._read_json_body()
+                self._send_json(start_training_run(str(payload.get("module_id", "TRAIN-001"))))
+                return
+            if parsed.path.startswith("/api/training/") and parsed.path.endswith("/answer"):
+                parts = parsed.path.strip("/").split("/")
+                payload = self._read_json_body()
                 self._send_json(
-                    start_training_run(str(payload.get("module_id", "TRAIN-001")))
+                    submit_training_answer(
+                        int(parts[2]),
+                        str(payload.get("question_id", "")),
+                        str(payload.get("answer", "")),
+                    )
                 )
                 return
-            if parsed.path.startswith("/api/training/") and parsed.path.endswith(
-                "/checkpoint"
-            ):
+            if parsed.path.startswith("/api/training/") and parsed.path.endswith("/checkpoint"):
                 parts = parsed.path.strip("/").split("/")
                 payload = self._read_json_body()
                 self._send_json(

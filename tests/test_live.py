@@ -21,6 +21,7 @@ from identitylab.live import (
     set_training_guide_step,
     start_case_run,
     start_training_run,
+    submit_training_answer,
     tick_case_run,
     tick_run,
     training_evidence_markdown,
@@ -28,7 +29,6 @@ from identitylab.live import (
     training_run_detail,
     update_case_task,
     update_incident_action,
-    update_training_checkpoint,
 )
 
 
@@ -64,8 +64,8 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "case run" in html
     assert "guided training" in html
     assert "workbench views" in html
-    assert "data-view-panel=\"overview\"" in html
-    assert "data-view-panel=\"incidents\"" in html
+    assert 'data-view-panel="overview"' in html
+    assert 'data-view-panel="incidents"' in html
     assert "guided case investigation" in html
     assert "learning objectives" in html
     assert "learning path" in html
@@ -79,11 +79,14 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "fetch('/api/scenarios')" in html
     assert "fetch('/api/cases')" in html
     assert "fetch('/api/training')" in html
+    assert "/api/training/${state.activetraining.run.id}/answer" in html
     assert "/api/training/${state.activetraining.run.id}/guide" in html
+    assert "data-training-checkpoint" not in html
+    assert "data-training-task" not in html
     assert "/api/state?scenario=" in html
     assert "<script src" not in html
     assert "<form" not in html
-    assert "type=\"file\"" not in html
+    assert 'type="file"' not in html
     assert "https://" not in html
     assert "http://" not in html
 
@@ -230,8 +233,7 @@ def test_case_tasks_close_and_export(tmp_path: Path) -> None:
 
     state = update_case_task(run_id, "review-correlation", True, db_path)
     assert any(
-        task["task_id"] == "review-correlation" and task["completed"]
-        for task in state["tasks"]
+        task["task_id"] == "review-correlation" and task["completed"] for task in state["tasks"]
     )
 
     state = close_case_run(run_id, "Escalated", "Synthetic case ready for review.", db_path)
@@ -267,30 +269,72 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
 
     assert state["module"]["case_id"] == "CASE-001"
     assert state["module"]["instructor_brief"]
-    assert len(state["module"]["assessment"]) == 4
+    assert len(state["module"]["assessment"]) == 3
     assert len(state["module"]["learning_flow"]) == 7
+    assert len(state["questions"]) == 4
     assert state["run"]["status"] == "In progress"
     assert len(state["checkpoints"]) == 5
     assert state["feedback"].startswith("Keep investigating")
     assert state["guide"]["current_step"] == 0
     assert state["guide"]["current"]["flow_id"] == "briefing"
     assert state["instructor"]["mode"] == "Guided Training"
-    assert state["instructor"]["version"] == "0.7.0"
+    assert state["instructor"]["version"] == "0.8.0"
     assert state["instructor"]["score"] == 0
 
     state = set_training_guide_step(training_run_id, 3, db_path)
-    assert state["guide"]["current_step"] == 3
-    assert state["guide"]["current"]["flow_id"] == "rule"
+    assert state["guide"]["current_step"] == 1
+    assert state["guide"]["current"]["flow_id"] == "timeline"
 
-    state = update_training_checkpoint(
+    for _ in range(4):
+        tick_case_run(case_run_id, db_path)
+
+    state = submit_training_answer(
         training_run_id,
-        "find-signal",
-        True,
+        "identify-benign",
+        "risky-sign-in",
+        db_path,
+    )
+    first_answer = next(
+        answer for answer in state["answers"] if answer["question_id"] == "identify-benign"
+    )
+    assert first_answer["correct"] is False
+    assert first_answer["attempts"] == 1
+
+    state = submit_training_answer(
+        training_run_id,
+        "identify-benign",
+        "service-failure",
         db_path,
     )
     assert any(
-        checkpoint["checkpoint_id"] == "find-signal" and checkpoint["completed"]
+        checkpoint["checkpoint_id"] == "observe-noise" and checkpoint["completed"]
         for checkpoint in state["checkpoints"]
+    )
+
+    state = set_training_guide_step(training_run_id, 2, db_path)
+    state = submit_training_answer(
+        training_run_id,
+        "correlate-entities",
+        "alex-shared-ip",
+        db_path,
+    )
+    state = set_training_guide_step(training_run_id, 3, db_path)
+    assert state["guide"]["current"]["flow_id"] == "rule"
+
+    for _ in range(4):
+        tick_case_run(case_run_id, db_path)
+    state = submit_training_answer(
+        training_run_id,
+        "explain-rule",
+        "correlated-sequence",
+        db_path,
+    )
+    state = set_training_guide_step(training_run_id, 4, db_path)
+    state = submit_training_answer(
+        training_run_id,
+        "choose-triage",
+        "document-correlation",
+        db_path,
     )
 
     state = request_training_hint(training_run_id, db_path)
@@ -298,23 +342,6 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     assert len(state["hints"]) == 1
     assert state["instructor"]["hints_used"] == 1
 
-    for checkpoint in state["checkpoints"]:
-        state = update_training_checkpoint(
-            training_run_id,
-            str(checkpoint["checkpoint_id"]),
-            True,
-            db_path,
-        )
-    for task in state["case_run"]["tasks"]:
-        update_case_task(
-            case_run_id,
-            str(task["task_id"]),
-            True,
-            db_path,
-        )
-
-    for _ in range(8):
-        tick_case_run(case_run_id, db_path)
     close_case_run(case_run_id, "Suspicious", "Correlated identity activity.", db_path)
 
     state = training_run_detail(training_run_id, db_path)
@@ -329,6 +356,7 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     markdown = training_evidence_markdown(training_run_id, db_path)
     assert "Training evidence: TRAIN-001" in markdown
     assert "Guided step:" in markdown
+    assert "Learner decisions" in markdown
     assert "Training assessment" in markdown
     assert "Learning objectives" in markdown
     assert "Correlated identity activity" in markdown or "Good call" in markdown

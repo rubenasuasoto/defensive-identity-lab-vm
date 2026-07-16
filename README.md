@@ -112,10 +112,10 @@ The Live Lab also includes `CASE-001`, a guided SOC-style case run with benign
 noise, an alertable cross-source identity incident, analyst tasks, case closure
 and JSON/Markdown evidence export.
 
-Guided Training v0.7.0 turns `TRAIN-001` into a learner-led case journey: choose
-a synthetic case, follow a persistent briefing-to-outcome path, reveal evidence,
-correlate entities, complete triage and receive feedback. The Analyst Workbench
-remains available for free practice and facilitator review.
+Guided Training v0.8.0 turns `TRAIN-001` into a learner-led case journey: choose
+a synthetic case, follow a persistent briefing-to-outcome path, make evidence-led
+decisions, correlate entities, complete triage and receive feedback. The Analyst
+Workbench remains available for free practice and facilitator review.
 
 Remove it with:
 

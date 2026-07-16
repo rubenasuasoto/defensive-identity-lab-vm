@@ -67,24 +67,25 @@ New, Investigating, Benign, Suspicious, Escalated, Closed
 
 The case remains local in `live_lab.sqlite` until `Reset runtime state` is used.
 
-## Guided Training v0.7.0
+## Guided Training v0.8.0
 
 `TRAIN-001` teaches the same `CASE-001` workflow for beginner SOC analysts. It is
 now a guided case journey rather than a collection of separate panels:
 
 - Choose a synthetic case and read the briefing.
-- Reveal timeline events and identify benign context.
-- Correlate entities, then review the rule evaluator.
-- Complete triage tasks and close the case with a decision note.
+- Reveal timeline events and identify benign context by choosing the event that is unrelated.
+- Correlate entities, then select the account and IP that explain the cross-source signal.
+- Reach the local alert, explain the rule sequence, choose a triage action and close the case with a decision note.
 - Review feedback, assessment and facilitator notes after closure.
 
 `Back` and `Continue` move through the path. The current step is stored locally,
 so a learner can refresh the browser and resume without restarting the case.
 
-Progressive hints remain available without revealing the facilitator notes. Those
-notes, the automatic assessment and the persistent facilitator review appear only
-on the final outcome screen after case closure. The `Case run` and `Incidents`
-views remain available as free-practice Workbench tools.
+Progressive hints remain available without revealing the facilitator notes. Each
+decision records attempts locally and unlocks the next guided screen only when the
+reasoning is correct. Those notes, the automatic assessment and the persistent
+facilitator review appear only on the final outcome screen after case closure. The
+`Case run` and `Incidents` views remain available as free-practice Workbench tools.
 
 Expected decisions are `Suspicious` or `Escalated`. Closing as `Benign` produces corrective feedback because the correlated cloud and endpoint evidence should be investigated.
 
