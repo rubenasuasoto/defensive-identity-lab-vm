@@ -67,17 +67,24 @@ New, Investigating, Benign, Suspicious, Escalated, Closed
 
 The case remains local in `live_lab.sqlite` until `Reset runtime state` is used.
 
-## Instructor Mode v0.6.0
+## Guided Training v0.7.0
 
-`TRAIN-001` teaches the same `CASE-001` workflow for beginner SOC analysts. It adds:
+`TRAIN-001` teaches the same `CASE-001` workflow for beginner SOC analysts. It is
+now a guided case journey rather than a collection of separate panels:
 
-- Learning objectives for benign noise, signal correlation, entities and closure.
-- Guided steps that can be checked off during the investigation.
-- Progressive hints that nudge the learner without revealing everything at once.
-- Feedback when the linked case is closed.
-- Automatic instructor assessment with score, readiness and recommendation.
-- Persistent instructor review rating and observation.
-- JSON or Markdown instructor evidence export.
+- Choose a synthetic case and read the briefing.
+- Reveal timeline events and identify benign context.
+- Correlate entities, then review the rule evaluator.
+- Complete triage tasks and close the case with a decision note.
+- Review feedback, assessment and facilitator notes after closure.
+
+`Back` and `Continue` move through the path. The current step is stored locally,
+so a learner can refresh the browser and resume without restarting the case.
+
+Progressive hints remain available without revealing the facilitator notes. Those
+notes, the automatic assessment and the persistent facilitator review appear only
+on the final outcome screen after case closure. The `Case run` and `Incidents`
+views remain available as free-practice Workbench tools.
 
 Expected decisions are `Suspicious` or `Escalated`. Closing as `Benign` produces corrective feedback because the correlated cloud and endpoint evidence should be investigated.
 

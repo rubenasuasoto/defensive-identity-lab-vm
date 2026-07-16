@@ -66,6 +66,7 @@ class TrainingModule:
     hints: list[str]
     expected_decisions: list[str]
     assessment: list[dict[str, object]]
+    learning_flow: list[dict[str, str]]
 
 
 SCENARIOS: list[LiveScenario] = [
@@ -443,6 +444,64 @@ TRAINING_MODULES: list[TrainingModule] = [
                 "description": "Learner closes as Suspicious or Escalated with a note.",
             },
         ],
+        learning_flow=[
+            {
+                "flow_id": "briefing",
+                "title": "Case briefing",
+                "instruction": (
+                    "You are reviewing a synthetic identity case. Your goal is to separate "
+                    "benign activity from evidence that needs analyst attention."
+                ),
+            },
+            {
+                "flow_id": "timeline",
+                "title": "Observe the timeline",
+                "instruction": (
+                    "Reveal the events one at a time. Identify at least one event that adds "
+                    "context but does not by itself justify escalation."
+                ),
+            },
+            {
+                "flow_id": "entities",
+                "title": "Correlate the entities",
+                "instruction": (
+                    "Review the account, IP address and host. Look for the values shared by "
+                    "the cloud and endpoint events."
+                ),
+            },
+            {
+                "flow_id": "rule",
+                "title": "Understand the alert",
+                "instruction": (
+                    "Continue the timeline until the local evaluator reaches Alert, then read "
+                    "which fields and entities made the correlation meaningful."
+                ),
+            },
+            {
+                "flow_id": "triage",
+                "title": "Complete the triage",
+                "instruction": (
+                    "Work through the analyst checklist. Record the account, source IP, host, "
+                    "MFA context and cross-source correlation before you decide."
+                ),
+            },
+            {
+                "flow_id": "close",
+                "title": "Close the case",
+                "instruction": (
+                    "Write a short decision note that explains the correlated evidence, then "
+                    "close the synthetic case as Suspicious or Escalated."
+                ),
+            },
+            {
+                "flow_id": "outcome",
+                "title": "Review the outcome",
+                "instruction": (
+                    "Review your feedback and assessment. Facilitator notes remain unavailable "
+                    "until the case has been closed."
+                ),
+            },
+        ],
     )
 ]
 
@@ -556,6 +615,7 @@ def training_to_dict(module: TrainingModule) -> dict[str, object]:
         "hints": module.hints,
         "expected_decisions": module.expected_decisions,
         "assessment": module.assessment,
+        "learning_flow": module.learning_flow,
         "scope_warning": SCOPE_WARNING,
     }
 
@@ -686,6 +746,15 @@ def init_store(db_path: Path = LIVE_DB) -> None:
                 hint_index INTEGER NOT NULL,
                 hint TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS training_progress (
+                training_run_id INTEGER PRIMARY KEY,
+                current_step INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """
         )
@@ -953,11 +1022,15 @@ def reset_runtime(db_path: Path = LIVE_DB) -> dict[str, object]:
             "training_hints": connection.execute(
                 "SELECT COUNT(*) FROM training_hints"
             ).fetchone()[0],
+            "training_progress": connection.execute(
+                "SELECT COUNT(*) FROM training_progress"
+            ).fetchone()[0],
             "instructor_reviews": connection.execute(
                 "SELECT COUNT(*) FROM instructor_reviews"
             ).fetchone()[0],
         }
         connection.execute("DELETE FROM instructor_reviews")
+        connection.execute("DELETE FROM training_progress")
         connection.execute("DELETE FROM training_hints")
         connection.execute("DELETE FROM training_checkpoints")
         connection.execute("DELETE FROM training_runs")
@@ -1156,6 +1229,13 @@ def start_training_run(
                 """,
                 (training_run_id, step["step_id"], step["label"], now),
             )
+        connection.execute(
+            """
+            INSERT INTO training_progress (training_run_id, current_step, updated_at)
+            VALUES (?, 0, ?)
+            """,
+            (training_run_id, now),
+        )
     return training_run_detail(training_run_id, db_path)
 
 
@@ -1170,12 +1250,17 @@ def training_run_detail(
     case_detail = case_run_detail(int(row["case_run_id"]), db_path)
     checkpoints = _load_training_checkpoints(training_run_id, db_path)
     hints = _load_training_hints(training_run_id, db_path)
+    guide = _training_guide(
+        module,
+        _load_training_progress(training_run_id, db_path),
+    )
     return {
         "run": row,
         "module": training_to_dict(module),
         "case_run": case_detail,
         "checkpoints": checkpoints,
         "hints": hints,
+        "guide": guide,
         "feedback": _training_feedback(row, case_detail, module),
         "instructor": _training_instructor_summary(
             row,
@@ -1214,6 +1299,30 @@ def save_instructor_review(
               updated_at = excluded.updated_at
             """,
             (training_run_id, clean_rating, clean_observation, _now()),
+        )
+    return training_run_detail(training_run_id, db_path)
+
+
+def set_training_guide_step(
+    training_run_id: int,
+    step_index: int,
+    db_path: Path = LIVE_DB,
+) -> dict[str, object]:
+    run = _load_training_run(training_run_id, db_path)
+    if run is None:
+        raise ValueError(f"Unknown training run: {training_run_id}")
+    module = _require_training_module(str(run["module_id"]))
+    clean_index = max(0, min(step_index, len(module.learning_flow) - 1))
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO training_progress (training_run_id, current_step, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(training_run_id) DO UPDATE SET
+              current_step = excluded.current_step,
+              updated_at = excluded.updated_at
+            """,
+            (training_run_id, clean_index, _now()),
         )
     return training_run_detail(training_run_id, db_path)
 
@@ -1278,9 +1387,13 @@ def training_evidence_markdown(
         f"- Audience: {module['audience']}",
         f"- Status: {run['status']}",
         f"- Feedback: {detail['feedback']}",
-        f"- Instructor score: {detail['instructor']['score']} / "
+        f"- Training score: {detail['instructor']['score']} / "
         f"{detail['instructor']['max_score']}",
-        f"- Instructor readiness: {detail['instructor']['readiness']}",
+        f"- Training readiness: {detail['instructor']['readiness']}",
+        (
+            f"- Guided step: {detail['guide']['current_step'] + 1} / "
+            f"{detail['guide']['total_steps']} ({detail['guide']['current']['title']})"
+        ),
         "",
         "## Learning objectives",
         "",
@@ -1297,7 +1410,7 @@ def training_evidence_markdown(
             lines.append(f"- {hint['hint']}")
     else:
         lines.append("- None")
-    lines.extend(["", "## Instructor assessment", ""])
+    lines.extend(["", "## Training assessment", ""])
     for criterion in detail["instructor"]["criteria"]:
         lines.append(
             f"- {criterion['name']}: {criterion['points']} / "
@@ -1305,7 +1418,7 @@ def training_evidence_markdown(
         )
     lines.append(f"- Recommendation: {detail['instructor']['recommendation']}")
     if detail["review"]:
-        lines.extend(["", "## Instructor review", ""])
+        lines.extend(["", "## Facilitator review", ""])
         lines.append(f"- Rating: {detail['review']['rating']}")
         lines.append(f"- Observation: {detail['review']['observation'] or '-'}")
     lines.extend(["", "## Case summary", ""])
@@ -1915,6 +2028,43 @@ def _load_training_hints(
     ]
 
 
+def _load_training_progress(training_run_id: int, db_path: Path) -> int:
+    init_store(db_path)
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT current_step FROM training_progress
+            WHERE training_run_id = ?
+            """,
+            (training_run_id,),
+        ).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def _training_guide(module: TrainingModule, current_step: int) -> dict[str, object]:
+    steps = module.learning_flow
+    clean_index = max(0, min(current_step, len(steps) - 1))
+    return {
+        "current_step": clean_index,
+        "total_steps": len(steps),
+        "current": steps[clean_index],
+        "steps": [
+            {
+                **step,
+                "position": index + 1,
+                "state": (
+                    "current"
+                    if index == clean_index
+                    else "complete"
+                    if index < clean_index
+                    else "upcoming"
+                ),
+            }
+            for index, step in enumerate(steps)
+        ],
+    }
+
+
 def _load_instructor_review(
     training_run_id: int,
     db_path: Path,
@@ -2009,7 +2159,7 @@ def _training_instructor_summary(
         recommendation = "Continue coaching on incomplete checkpoints or case tasks."
     else:
         readiness = "Needs guided practice"
-        recommendation = "Keep the learner in Instructor Mode and walk through each evidence panel."
+        recommendation = "Continue the guided training path and complete each evidence step."
 
     criteria = [
         {
@@ -2040,8 +2190,8 @@ def _training_instructor_summary(
         },
     ]
     return {
-        "mode": "Instructor Mode",
-        "version": "0.6.0",
+        "mode": "Guided Training",
+        "version": "0.7.0",
         "score": score,
         "max_score": 10,
         "readiness": readiness,
@@ -2251,6 +2401,24 @@ def _render_workbench_app() -> str:
       gap: 16px;
       align-items: start;
     }
+    .guide-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, .7fr) minmax(0, 1.6fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .guide-progress { display: grid; gap: 8px; }
+    .guide-progress div {
+      border-left: 4px solid var(--line);
+      padding: 8px 10px;
+      background: #f8fbff;
+    }
+    .guide-progress div.current { border-left-color: var(--accent); }
+    .guide-progress div.complete { border-left-color: var(--ok); }
+    .guide-action { display: grid; gap: 12px; }
+    .guide-nav { display: flex; gap: 8px; flex-wrap: wrap; }
+    .guide-nav button { min-width: 120px; }
+    .guide-solution { border-left: 4px solid var(--ok); padding-left: 12px; }
     .case-grid .wide { grid-column: 1 / -1; }
     .event-list {
       display: grid;
@@ -2325,7 +2493,7 @@ def _render_workbench_app() -> str:
     .note-form { display: grid; gap: 8px; margin-top: 12px; }
     .filters { display: grid; gap: 8px; margin-top: 10px; }
     @media (max-width: 1100px) {
-      .workbench, .case-grid, .training-grid { grid-template-columns: 1fr; }
+      .workbench, .case-grid, .training-grid, .guide-layout { grid-template-columns: 1fr; }
       .case-grid .wide { grid-column: auto; }
     }
     @media (max-width: 700px) {
@@ -2349,7 +2517,7 @@ def _render_workbench_app() -> str:
       <button class="view-tab active" data-view="overview" aria-selected="true">Overview</button>
       <button class="view-tab" data-view="incidents" aria-selected="false">Incidents</button>
       <button class="view-tab" data-view="case" aria-selected="false">Case run</button>
-      <button class="view-tab" data-view="training" aria-selected="false">Instructor</button>
+      <button class="view-tab" data-view="training" aria-selected="false">Guided training</button>
     </nav>
 
     <section class="view" data-view-panel="overview">
@@ -2506,46 +2674,56 @@ def _render_workbench_app() -> str:
 
     <section class="view" data-view-panel="training" hidden>
       <section class="panel view-heading">
-        <h2>Instructor Mode v0.6.0</h2>
-        <p>Coach a learner through guided checkpoints, evidence review and a
-          defensible case decision.</p>
+        <h2>Guided Training</h2>
+        <p>Choose a synthetic case, then work through one clear investigation step at a time.</p>
       </section>
       <section class="toolbar">
-        <strong>Instructor Mode</strong>
+        <strong>Choose a training case</strong>
         <select id="training-select"></select>
-        <button id="training-start" class="primary">Start Instructor run</button>
+        <button id="training-start" class="primary">Start guided training</button>
         <button id="training-hint">Hint</button>
-        <button id="training-export-json">Export instructor JSON</button>
-        <button id="training-export-md">Export instructor MD</button>
-        <span id="training-status">No active instructor run.</span>
+        <button id="training-export-json">Export training JSON</button>
+        <button id="training-export-md">Export training MD</button>
+        <span id="training-status">Choose a case to begin.</span>
       </section>
-      <section class="training-grid">
+      <section class="guide-layout">
         <div class="panel">
-          <h2>Learning objectives</h2>
+          <h2>Learning path</h2>
+          <div id="training-progress" class="guide-progress"></div>
+          <h3>Learning objectives</h3>
           <div id="learning-objectives" class="kv"></div>
         </div>
         <div class="panel">
-          <h2>Guided steps</h2>
-          <div id="guided-steps" class="kv"></div>
-        </div>
-        <div class="panel wide">
-          <h2>Feedback</h2>
-          <p id="training-feedback">Start an instructor run for guided feedback.</p>
+          <p id="training-step-count" class="pill">Step 0</p>
+          <h2 id="training-step-title">Choose a case</h2>
+          <p id="training-step-instruction">Select a case and start the guided investigation.</p>
+          <div id="training-step-content" class="guide-action"></div>
+          <p id="training-feedback">Guidance will appear here as you progress.</p>
           <p id="training-hint-output"></p>
-        </div>
-        <div class="panel wide">
-          <h2>Instructor assessment</h2>
-          <p id="instructor-score">No active instructor score.</p>
-          <div id="instructor-assessment" class="kv"></div>
-          <div class="note-form">
-            <h3>Instructor review</h3>
+          <div class="guide-nav">
+            <button id="training-back">Back</button>
+            <button id="training-next" class="primary">Continue</button>
+          </div>
+          <div id="training-outcome" hidden>
+            <h3>Training outcome</h3>
+            <p id="instructor-score">No active training score.</p>
+            <div id="instructor-assessment" class="kv"></div>
+            <details class="guide-solution" id="facilitator-notes" hidden>
+              <summary>Facilitator notes</summary>
+              <p>The alert is justified by a high-risk Entra sign-in, repeated Windows failures,
+                and a later successful logon for the same account and source IP. The unrelated
+                benign events add context but do not cancel that correlation.</p>
+            </details>
+          </div>
+          <div id="facilitator-review" class="note-form" hidden>
+            <h3>Facilitator review</h3>
             <select id="instructor-rating">
               <option>Needs guided practice</option>
               <option>Developing</option>
               <option>Ready for independent review</option>
             </select>
-            <textarea id="instructor-observation" placeholder="Instructor observation"></textarea>
-            <button id="instructor-review-save">Save instructor review</button>
+            <textarea id="instructor-observation" placeholder="Facilitator observation"></textarea>
+            <button id="instructor-review-save">Save facilitator review</button>
             <p id="instructor-review-status"></p>
           </div>
         </div>
@@ -2615,15 +2793,22 @@ def _render_workbench_app() -> str:
       $('learning-objectives').innerHTML = module.objectives.map((objective) =>
         `<div>${h(objective)}</div>`
       ).join('');
-      $('guided-steps').innerHTML = module.guided_steps.map((step) =>
-        `<div>${h(step.label)}</div>`
+      $('training-progress').innerHTML = module.learning_flow.map((step, index) =>
+        `<div><strong>${index + 1}. ${h(step.title)}</strong><br>` +
+        `<small>${h(step.instruction)}</small></div>`
       ).join('');
-      $('training-feedback').textContent = module.instructor_brief || module.summary;
-      $('instructor-score').textContent = 'Assessment starts when the instructor run begins.';
-      $('instructor-assessment').innerHTML = (module.assessment || []).map((criterion) =>
-        `<div><strong>${h(criterion.name)}</strong><br>` +
-        `${h(criterion.max_points)} pts | ${h(criterion.description)}</div>`
-      ).join('');
+      $('training-step-count').textContent = 'Choose a case';
+      $('training-step-title').textContent = module.title;
+      $('training-step-instruction').textContent = module.summary;
+      $('training-step-content').innerHTML =
+        '<div><strong>What you will do</strong><br>' + h(module.instructor_brief) + '</div>';
+      $('training-feedback').textContent = 'Start guided training when you are ready.';
+      $('training-hint-output').textContent = '';
+      $('training-outcome').hidden = true;
+      $('facilitator-review').hidden = true;
+      $('facilitator-notes').hidden = true;
+      $('training-back').disabled = true;
+      $('training-next').disabled = true;
     }
 
     async function startTrainingRun() {
@@ -2728,13 +2913,23 @@ def _render_workbench_app() -> str:
       state.activeCaseRun = null;
       state.activeTraining = null;
       $('case-status').textContent = 'No active case.';
-      $('training-status').textContent = 'No active instructor run.';
+      $('training-status').textContent = 'Choose a case to begin.';
       $('case-tasks').innerHTML = '';
       $('learning-objectives').innerHTML = '';
-      $('guided-steps').innerHTML = '';
-      $('training-feedback').textContent = 'Start an instructor run for guided feedback.';
+      $('training-progress').innerHTML = '';
+      $('training-step-count').textContent = 'Step 0';
+      $('training-step-title').textContent = 'Choose a case';
+      $('training-step-instruction').textContent =
+        'Select a case and start the guided investigation.';
+      $('training-step-content').innerHTML = '';
+      $('training-feedback').textContent = 'Guidance will appear here as you progress.';
       $('training-hint-output').textContent = '';
-      $('instructor-score').textContent = 'No active instructor score.';
+      $('training-outcome').hidden = true;
+      $('facilitator-review').hidden = true;
+      $('facilitator-notes').hidden = true;
+      $('training-back').disabled = true;
+      $('training-next').disabled = true;
+      $('instructor-score').textContent = 'No active training score.';
       $('instructor-assessment').innerHTML = '';
       $('instructor-rating').value = 'Developing';
       $('instructor-observation').value = '';
@@ -2897,28 +3092,11 @@ def _render_workbench_app() -> str:
       $('learning-objectives').innerHTML = payload.module.objectives.map((objective) =>
         `<div>${h(objective)}</div>`
       ).join('');
-      $('guided-steps').innerHTML = payload.checkpoints.map((checkpoint) => `
-        <div>
-          <label>
-            <input
-              type="checkbox"
-              data-checkpoint="${h(checkpoint.checkpoint_id)}"
-              ${checkpoint.completed ? 'checked' : ''}
-            >
-            ${h(checkpoint.label)}
-          </label>
-        </div>
-      `).join('');
-      document.querySelectorAll('[data-checkpoint]').forEach((checkbox) => {
-        checkbox.addEventListener('change', () => updateTrainingCheckpoint(
-          checkbox.dataset.checkpoint,
-          checkbox.checked
-        ));
-      });
       $('training-feedback').textContent = payload.feedback;
       $('training-hint-output').textContent = payload.latest_hint
         ? `Hint: ${payload.latest_hint}`
         : (payload.hints.length ? `Hint: ${payload.hints[payload.hints.length - 1].hint}` : '');
+      renderTrainingGuide(payload);
       $('instructor-score').textContent =
         `Score ${payload.instructor.score}/${payload.instructor.max_score} | ` +
         `${payload.instructor.readiness} | hints used: ${payload.instructor.hints_used}`;
@@ -2940,6 +3118,104 @@ def _render_workbench_app() -> str:
       $('instructor-review-status').textContent = payload.review
         ? `Review saved: ${payload.review.rating}`
         : '';
+    }
+
+    function trainingCheckpointControl(payload, checkpointId) {
+      const checkpoint = payload.checkpoints.find((item) => item.checkpoint_id === checkpointId);
+      if (!checkpoint) return '';
+      return `<label><input type="checkbox" data-training-checkpoint="${h(checkpointId)}" ` +
+        `${checkpoint.completed ? 'checked' : ''}> ${h(checkpoint.label)}</label>`;
+    }
+
+    function trainingEntities(entities) {
+      const groups = ['accounts', 'ips', 'hosts', 'sources', 'tables'];
+      return groups.map((group) => `<div><strong>${h(group)}</strong><br>` +
+        `${h((entities[group] || []).join(', ') || '-')}</div>`).join('');
+    }
+
+    function renderTrainingGuide(payload) {
+      const guide = payload.guide;
+      const step = guide.current;
+      const caseRun = payload.case_run;
+      $('training-progress').innerHTML = guide.steps.map((item) =>
+        `<div class="${h(item.state)}"><strong>${h(item.position)}. ${h(item.title)}</strong><br>` +
+        `<small>${h(item.state === 'current' ? item.instruction : item.state)}</small></div>`
+      ).join('');
+      $('training-step-count').textContent =
+        `Step ${guide.current_step + 1} of ${guide.total_steps}`;
+      $('training-step-title').textContent = step.title;
+      $('training-step-instruction').textContent = step.instruction;
+      $('training-back').disabled = guide.current_step === 0;
+      $('training-next').disabled = guide.current_step >= guide.total_steps - 1;
+      const nextStep = guide.steps[guide.current_step + 1];
+      $('training-next').textContent = nextStep
+        ? `Continue: ${nextStep.title}`
+        : 'Training complete';
+      $('training-outcome').hidden = step.flow_id !== 'outcome';
+      const caseClosed = caseRun.run.status === 'Closed';
+      $('facilitator-notes').hidden = step.flow_id !== 'outcome' || !caseClosed;
+      $('facilitator-review').hidden = step.flow_id !== 'outcome' || !caseClosed;
+
+      let content = '';
+      if (step.flow_id === 'briefing') {
+        content = `<div><strong>Case:</strong> ${h(caseRun.case.case_id)} - ` +
+          `${h(caseRun.case.title)}</div>` +
+          `<div><strong>Primary detection:</strong> ${h(caseRun.case.primary_detection)}</div>`;
+      } else if (step.flow_id === 'timeline') {
+        content = `<button id="training-case-tick" class="primary">Reveal next event</button>` +
+          `<div class="event-list">${caseRun.events.length ? caseRun.events.map((event) =>
+            `<div><strong>t+${h(event.offset)}s ${h(event.table)}</strong><br>` +
+            `${h(event.detail)}<br>` +
+            `<small>${h(event.classification)} | ${h(event.severity)}</small></div>`
+          ).join('') : '<div>No events revealed yet.</div>'}</div>` +
+          trainingCheckpointControl(payload, 'observe-noise');
+      } else if (step.flow_id === 'entities') {
+        content = `<div class="kv">${trainingEntities(caseRun.entities || {})}</div>` +
+          trainingCheckpointControl(payload, 'find-signal');
+      } else if (step.flow_id === 'rule') {
+        const evaluatorReason = caseRun.evaluation.reason || 'Keep revealing events.';
+        const matchedFields = (caseRun.evaluation.matched_fields || []).join(' | ') || '-';
+        content = `<div><strong>Evaluator state:</strong> ` +
+          `${h(caseRun.evaluation.status)}</div>` +
+          `<div><strong>Why:</strong><br>${h(evaluatorReason)}</div>` +
+          `<div><strong>Matched fields:</strong><br>${h(matchedFields)}</div>` +
+          trainingCheckpointControl(payload, 'review-rule');
+      } else if (step.flow_id === 'triage') {
+        content = `<div class="kv">${caseRun.tasks.map((task) =>
+          `<div><label><input type="checkbox" data-training-task="${h(task.task_id)}" ` +
+          `${task.completed ? 'checked' : ''}> ${h(task.label)}</label></div>`
+        ).join('')}</div>` + trainingCheckpointControl(payload, 'complete-tasks');
+      } else if (step.flow_id === 'close') {
+        content = `<select id="training-case-decision"><option>Suspicious</option>` +
+          `<option>Escalated</option><option>Benign</option><option>Closed</option></select>` +
+          `<textarea id="training-case-note" ` +
+          `placeholder="Explain the evidence behind your decision"></textarea>` +
+          `<button id="training-case-close" class="primary">Close guided case</button>` +
+          `<p id="training-case-close-status"></p>` +
+          trainingCheckpointControl(payload, 'close-case');
+      } else {
+        content = caseRun.run.status === 'Closed'
+          ? '<div><strong>Case closed.</strong> Review your score, feedback and ' +
+            'facilitator notes.</div>'
+          : '<div>Close the case in the previous step to unlock the complete outcome.</div>';
+      }
+      $('training-step-content').innerHTML = content;
+      document.querySelectorAll('[data-training-checkpoint]').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => updateTrainingCheckpoint(
+          checkbox.dataset.trainingCheckpoint,
+          checkbox.checked
+        ));
+      });
+      document.querySelectorAll('[data-training-task]').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => updateCaseTask(
+          checkbox.dataset.trainingTask,
+          checkbox.checked
+        ));
+      });
+      const tickButton = $('training-case-tick');
+      if (tickButton) tickButton.addEventListener('click', tickTrainingCase);
+      const closeButton = $('training-case-close');
+      if (closeButton) closeButton.addEventListener('click', closeGuidedTrainingCase);
     }
 
     function renderEvents(events) {
@@ -3049,6 +3325,50 @@ def _render_workbench_app() -> str:
       renderTrainingRun(await response.json());
     }
 
+    async function moveTrainingGuide(delta) {
+      if (!state.activeTraining) return;
+      const target = state.activeTraining.guide.current_step + delta;
+      const response = await fetch(`/api/training/${state.activeTraining.run.id}/guide`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({step_index: target})
+      });
+      renderTrainingRun(await response.json());
+    }
+
+    async function tickTrainingCase() {
+      if (!state.activeTraining) return;
+      const response = await fetch(
+        `/api/cases/${state.activeTraining.case_run.run.id}/tick`,
+        {method: 'POST'}
+      );
+      const casePayload = await response.json();
+      renderCaseRun(casePayload);
+      await loadTrainingRun(state.activeTraining.run.id);
+      await loadIncidents(casePayload.incident ? casePayload.incident.id : null);
+    }
+
+    async function closeGuidedTrainingCase() {
+      if (!state.activeTraining) return;
+      const response = await fetch(
+        `/api/cases/${state.activeTraining.case_run.run.id}/close`,
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            decision: $('training-case-decision').value,
+            note: $('training-case-note').value
+          })
+        }
+      );
+      const casePayload = await response.json();
+      await loadTrainingRun(state.activeTraining.run.id);
+      await loadIncidents(casePayload.incident ? casePayload.incident.id : null);
+      if (state.activeTraining.guide.current.flow_id === 'close') {
+        await moveTrainingGuide(1);
+      }
+    }
+
     async function exportEvidence(format) {
       const suffix = state.selectedIncidentId
         ? `incident=${state.selectedIncidentId}&format=${format}`
@@ -3084,7 +3404,7 @@ def _render_workbench_app() -> str:
 
     async function exportTrainingEvidence(format) {
       if (!state.activeTraining) {
-        $('training-feedback').textContent = 'Start an instructor run first.';
+        $('training-feedback').textContent = 'Start guided training first.';
         return;
       }
       const id = state.activeTraining.run.id;
@@ -3093,14 +3413,14 @@ def _render_workbench_app() -> str:
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `instructor-${id}-evidence.${format}`;
+      link.download = `training-${id}-evidence.${format}`;
       link.click();
       URL.revokeObjectURL(url);
     }
 
     async function requestHint() {
       if (!state.activeTraining) {
-        $('training-feedback').textContent = 'Start an instructor run first.';
+        $('training-feedback').textContent = 'Start guided training first.';
         return;
       }
       const response = await fetch(`/api/training/${state.activeTraining.run.id}/hint`, {
@@ -3111,7 +3431,7 @@ def _render_workbench_app() -> str:
 
     async function saveInstructorReview() {
       if (!state.activeTraining) {
-        $('instructor-review-status').textContent = 'Start an instructor run first.';
+        $('instructor-review-status').textContent = 'Close a guided training case first.';
         return;
       }
       const response = await fetch(
@@ -3183,6 +3503,8 @@ def _render_workbench_app() -> str:
     $('training-hint').addEventListener('click', requestHint);
     $('training-export-json').addEventListener('click', () => exportTrainingEvidence('json'));
     $('training-export-md').addEventListener('click', () => exportTrainingEvidence('md'));
+    $('training-back').addEventListener('click', () => moveTrainingGuide(-1));
+    $('training-next').addEventListener('click', () => moveTrainingGuide(1));
     $('instructor-review-save').addEventListener('click', saveInstructorReview);
     $('case-start').addEventListener('click', startCaseRun);
     $('case-tick').addEventListener('click', tickCaseRun);
@@ -3375,6 +3697,16 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
                         int(parts[2]),
                         str(payload.get("checkpoint_id", "")),
                         bool(payload.get("completed", True)),
+                    )
+                )
+                return
+            if parsed.path.startswith("/api/training/") and parsed.path.endswith("/guide"):
+                parts = parsed.path.strip("/").split("/")
+                payload = self._read_json_body()
+                self._send_json(
+                    set_training_guide_step(
+                        int(parts[2]),
+                        int(payload.get("step_index", 0)),
                     )
                 )
                 return

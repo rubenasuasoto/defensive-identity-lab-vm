@@ -18,6 +18,7 @@ from identitylab.live import (
     save_instructor_review,
     scenario_index,
     scenario_to_dict,
+    set_training_guide_step,
     start_case_run,
     start_training_run,
     tick_case_run,
@@ -61,15 +62,16 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "rule evaluation" in html
     assert "reset runtime state" in html
     assert "case run" in html
-    assert "instructor mode v0.6.0" in html
+    assert "guided training" in html
     assert "workbench views" in html
     assert "data-view-panel=\"overview\"" in html
     assert "data-view-panel=\"incidents\"" in html
     assert "guided case investigation" in html
     assert "learning objectives" in html
-    assert "guided steps" in html
-    assert "instructor assessment" in html
-    assert "instructor review" in html
+    assert "learning path" in html
+    assert "reveal next event" in html
+    assert "facilitator notes" in html
+    assert "training outcome" in html
     assert "hint" in html
     assert "feedback" in html
     assert "analyst tasks" in html
@@ -77,6 +79,7 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "fetch('/api/scenarios')" in html
     assert "fetch('/api/cases')" in html
     assert "fetch('/api/training')" in html
+    assert "/api/training/${state.activetraining.run.id}/guide" in html
     assert "/api/state?scenario=" in html
     assert "<script src" not in html
     assert "<form" not in html
@@ -265,12 +268,19 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     assert state["module"]["case_id"] == "CASE-001"
     assert state["module"]["instructor_brief"]
     assert len(state["module"]["assessment"]) == 4
+    assert len(state["module"]["learning_flow"]) == 7
     assert state["run"]["status"] == "In progress"
     assert len(state["checkpoints"]) == 5
     assert state["feedback"].startswith("Keep investigating")
-    assert state["instructor"]["mode"] == "Instructor Mode"
-    assert state["instructor"]["version"] == "0.6.0"
+    assert state["guide"]["current_step"] == 0
+    assert state["guide"]["current"]["flow_id"] == "briefing"
+    assert state["instructor"]["mode"] == "Guided Training"
+    assert state["instructor"]["version"] == "0.7.0"
     assert state["instructor"]["score"] == 0
+
+    state = set_training_guide_step(training_run_id, 3, db_path)
+    assert state["guide"]["current_step"] == 3
+    assert state["guide"]["current"]["flow_id"] == "rule"
 
     state = update_training_checkpoint(
         training_run_id,
@@ -318,7 +328,8 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
 
     markdown = training_evidence_markdown(training_run_id, db_path)
     assert "Training evidence: TRAIN-001" in markdown
-    assert "Instructor assessment" in markdown
+    assert "Guided step:" in markdown
+    assert "Training assessment" in markdown
     assert "Learning objectives" in markdown
     assert "Correlated identity activity" in markdown or "Good call" in markdown
 
@@ -354,4 +365,4 @@ def test_instructor_review_is_persistent(tmp_path: Path) -> None:
         "Good timeline review; needs a clearer decision note."
     )
     assert training_run_detail(training_run_id, db_path)["review"]["rating"] == "Developing"
-    assert "Instructor review" in training_evidence_markdown(training_run_id, db_path)
+    assert "Facilitator review" in training_evidence_markdown(training_run_id, db_path)
