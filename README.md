@@ -117,6 +117,10 @@ a synthetic case, follow a persistent briefing-to-outcome path, make evidence-le
 decisions, correlate entities, complete triage and receive feedback. The Analyst
 Workbench remains available for free practice and facilitator review.
 
+Each guided step keeps an internal Evidence desk for the timeline, entities,
+incident and rule evaluation, so learners can inspect the evidence they need
+without leaving the lesson.
+
 Remove it with:
 
 ```powershell

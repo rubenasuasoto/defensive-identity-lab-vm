@@ -2743,6 +2743,12 @@ def _render_workbench_app() -> str:
     .guide-options { display: grid; gap: 8px; }
     .guide-options label { display: flex; gap: 8px; align-items: flex-start; }
     .guide-question-feedback { margin: 0; min-height: 1.4em; }
+    .evidence-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+    .evidence-nav button.active {
+      border-color: var(--accent);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .evidence-desk { margin-top: 12px; min-height: 120px; }
     .case-grid .wide { grid-column: 1 / -1; }
     .event-list {
       display: grid;
@@ -3022,6 +3028,12 @@ def _render_workbench_app() -> str:
           <h2 id="training-step-title">Choose a case</h2>
           <p id="training-step-instruction">Select a case and start the guided investigation.</p>
           <div id="training-step-content" class="guide-action"></div>
+          <section id="training-evidence" hidden>
+            <h3>Evidence desk</h3>
+            <p>Navigate the synthetic evidence without leaving Guided training.</p>
+            <div id="training-evidence-nav" class="evidence-nav"></div>
+            <div id="training-evidence-panel" class="evidence-desk"></div>
+          </section>
           <p id="training-feedback">Guidance will appear here as you progress.</p>
           <p id="training-hint-output"></p>
           <div class="guide-nav">
@@ -3065,6 +3077,8 @@ def _render_workbench_app() -> str:
       activeCaseRun: null,
       trainingModules: [],
       activeTraining: null,
+      trainingEvidenceView: 'timeline',
+      trainingGuideFlow: '',
       incidents: []
     };
 
@@ -3128,6 +3142,9 @@ def _render_workbench_app() -> str:
         '<div><strong>What you will do</strong><br>' + h(module.instructor_brief) + '</div>';
       $('training-feedback').textContent = 'Start guided training when you are ready.';
       $('training-hint-output').textContent = '';
+      $('training-evidence').hidden = true;
+      $('training-evidence-nav').innerHTML = '';
+      $('training-evidence-panel').innerHTML = '';
       $('training-outcome').hidden = true;
       $('facilitator-review').hidden = true;
       $('facilitator-notes').hidden = true;
@@ -3236,6 +3253,8 @@ def _render_workbench_app() -> str:
       state.incident = null;
       state.activeCaseRun = null;
       state.activeTraining = null;
+      state.trainingEvidenceView = 'timeline';
+      state.trainingGuideFlow = '';
       $('case-status').textContent = 'No active case.';
       $('training-status').textContent = 'Choose a case to begin.';
       $('case-tasks').innerHTML = '';
@@ -3246,6 +3265,9 @@ def _render_workbench_app() -> str:
       $('training-step-instruction').textContent =
         'Select a case and start the guided investigation.';
       $('training-step-content').innerHTML = '';
+      $('training-evidence').hidden = true;
+      $('training-evidence-nav').innerHTML = '';
+      $('training-evidence-panel').innerHTML = '';
       $('training-feedback').textContent = 'Guidance will appear here as you progress.';
       $('training-hint-output').textContent = '';
       $('training-outcome').hidden = true;
@@ -3478,10 +3500,75 @@ def _render_workbench_app() -> str:
         `${h(state)}</p></div>`;
     }
 
+    function trainingEvidencePanel(payload) {
+      const caseRun = payload.case_run;
+      const view = state.trainingEvidenceView;
+      const views = [
+        ['timeline', 'Timeline'],
+        ['entities', 'Entities'],
+        ['incident', 'Incident'],
+        ['rule', 'Rule evaluation']
+      ];
+      $('training-evidence-nav').innerHTML = views.map(([id, label]) =>
+        `<button data-training-evidence="${id}" class="${view === id ? 'active' : ''}">` +
+        `${h(label)}</button>`
+      ).join('');
+      if (view === 'timeline') {
+        const reveal = !caseRun.complete
+          ? '<button id="training-case-tick" class="primary">Reveal next event</button>'
+          : '<p class="ok-text">All synthetic events have been revealed.</p>';
+        $('training-evidence-panel').innerHTML = reveal +
+          `<div class="event-list">${caseRun.events.length ? caseRun.events.map((event) =>
+            `<div><strong>t+${h(event.offset)}s ${h(event.table)}</strong><br>` +
+            `${h(event.detail)}<br>` +
+            `<small>${h(event.source)} | ${h(event.severity)}</small></div>`
+          ).join('') : '<div>No events revealed yet.</div>'}</div>`;
+      } else if (view === 'entities') {
+        $('training-evidence-panel').innerHTML =
+          `<div class="kv">${trainingEntities(caseRun.entities || {})}</div>`;
+      } else if (view === 'incident') {
+        const incident = caseRun.incident;
+        $('training-evidence-panel').innerHTML = incident
+          ? `<div class="kv"><div><strong>${h(incident.detection)}</strong><br>` +
+            `${h(incident.severity)} | ${h(incident.status)}</div>` +
+            `<div><strong>Why it alerted</strong><br>${h(incident.reason)}</div>` +
+            `<div><strong>Entities</strong><br>${h(incident.account)} | ` +
+            `${h(incident.ip)} | ${h(incident.host)}</div></div>`
+          : '<p>No incident exists yet. Continue revealing the timeline and revisit this view.</p>';
+      } else {
+        const reason = caseRun.evaluation.reason || 'Keep revealing events.';
+        const fields = (caseRun.evaluation.matched_fields || []).join(' | ') || '-';
+        $('training-evidence-panel').innerHTML = `<div class="kv">` +
+          `<div><strong>Evaluator state</strong><br>${h(caseRun.evaluation.status)}</div>` +
+          `<div><strong>Why</strong><br>${h(reason)}</div>` +
+          `<div><strong>Matched fields</strong><br>${h(fields)}</div></div>`;
+      }
+      document.querySelectorAll('[data-training-evidence]').forEach((button) => {
+        button.addEventListener('click', () => {
+          state.trainingEvidenceView = button.dataset.trainingEvidence;
+          trainingEvidencePanel(payload);
+        });
+      });
+      const tickButton = $('training-case-tick');
+      if (tickButton) tickButton.addEventListener('click', tickTrainingCase);
+    }
+
     function renderTrainingGuide(payload) {
       const guide = payload.guide;
       const step = guide.current;
       const caseRun = payload.case_run;
+      const preferredEvidence = {
+        timeline: 'timeline',
+        entities: 'entities',
+        rule: 'rule',
+        triage: 'incident',
+        close: 'incident',
+        outcome: 'incident'
+      };
+      if (state.trainingGuideFlow !== step.flow_id) {
+        state.trainingEvidenceView = preferredEvidence[step.flow_id] || 'timeline';
+        state.trainingGuideFlow = step.flow_id;
+      }
       $('training-progress').innerHTML = guide.steps.map((item) =>
         `<div class="${h(item.state)}"><strong>${h(item.position)}. ${h(item.title)}</strong><br>` +
         `<small>${h(item.state === 'current' ? item.instruction : item.state)}</small></div>`
@@ -3497,6 +3584,7 @@ def _render_workbench_app() -> str:
         ? `Continue: ${nextStep.title}`
         : 'Training complete';
       $('training-outcome').hidden = step.flow_id !== 'outcome';
+      $('training-evidence').hidden = step.flow_id === 'briefing' || step.flow_id === 'outcome';
       const caseClosed = caseRun.run.status === 'Closed';
       $('facilitator-notes').hidden = step.flow_id !== 'outcome' || !caseClosed;
       $('facilitator-review').hidden = step.flow_id !== 'outcome' || !caseClosed;
@@ -3507,31 +3595,13 @@ def _render_workbench_app() -> str:
           `${h(caseRun.case.title)}</div>` +
           `<div><strong>Primary detection:</strong> ${h(caseRun.case.primary_detection)}</div>`;
       } else if (step.flow_id === 'timeline') {
-        content = `<button id="training-case-tick" class="primary">Reveal next event</button>` +
-          `<div class="event-list">${caseRun.events.length ? caseRun.events.map((event) =>
-            `<div><strong>t+${h(event.offset)}s ${h(event.table)}</strong><br>` +
-            `${h(event.detail)}<br>` +
-            `<small>${h(event.source)} | ${h(event.severity)}</small></div>`
-          ).join('') : '<div>No events revealed yet.</div>'}</div>` +
-          trainingQuestionControl(payload, 'timeline');
+        content = trainingQuestionControl(payload, 'timeline');
       } else if (step.flow_id === 'entities') {
-        content = `<div class="kv">${trainingEntities(caseRun.entities || {})}</div>` +
-          trainingQuestionControl(payload, 'entities');
+        content = trainingQuestionControl(payload, 'entities');
       } else if (step.flow_id === 'rule') {
-        const evaluatorReason = caseRun.evaluation.reason || 'Keep revealing events.';
-        const matchedFields = (caseRun.evaluation.matched_fields || []).join(' | ') || '-';
-        const revealControl = caseRun.evaluation.status !== 'Alert' && !caseRun.complete
-          ? '<button id="training-case-tick" class="primary">Reveal next event</button>'
-          : '';
-        content = revealControl + `<div><strong>Evaluator state:</strong> ` +
-          `${h(caseRun.evaluation.status)}</div>` +
-          `<div><strong>Why:</strong><br>${h(evaluatorReason)}</div>` +
-          `<div><strong>Matched fields:</strong><br>${h(matchedFields)}</div>` +
-          trainingQuestionControl(payload, 'rule');
+        content = trainingQuestionControl(payload, 'rule');
       } else if (step.flow_id === 'triage') {
-        content = `<div><strong>Evidence available:</strong> ${h(caseRun.event_count)} events | ` +
-          `${h(caseRun.evaluation.status)} evaluator state.</div>` +
-          trainingQuestionControl(payload, 'triage');
+        content = trainingQuestionControl(payload, 'triage');
       } else if (step.flow_id === 'close') {
         content = `<select id="training-case-decision"><option>Suspicious</option>` +
           `<option>Escalated</option><option>Benign</option><option>Closed</option></select>` +
@@ -3546,13 +3616,12 @@ def _render_workbench_app() -> str:
           : '<div>Close the case in the previous step to unlock the complete outcome.</div>';
       }
       $('training-step-content').innerHTML = content;
+      if (!$('training-evidence').hidden) trainingEvidencePanel(payload);
       document.querySelectorAll('[data-training-answer]').forEach((button) => {
         button.addEventListener('click', () => submitTrainingAnswer(
           button.dataset.trainingAnswer
         ));
       });
-      const tickButton = $('training-case-tick');
-      if (tickButton) tickButton.addEventListener('click', tickTrainingCase);
       const closeButton = $('training-case-close');
       if (closeButton) closeButton.addEventListener('click', closeGuidedTrainingCase);
     }

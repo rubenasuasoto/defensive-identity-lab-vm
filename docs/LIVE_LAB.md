@@ -81,6 +81,10 @@ now a guided case journey rather than a collection of separate panels:
 `Back` and `Continue` move through the path. The current step is stored locally,
 so a learner can refresh the browser and resume without restarting the case.
 
+The guided screen includes an internal `Evidence desk` with Timeline, Entities,
+Incident and Rule evaluation tabs. Learners can inspect those views while staying
+inside the lesson; the Timeline question is shown before any events are revealed.
+
 Progressive hints remain available without revealing the facilitator notes. Each
 decision records attempts locally and unlocks the next guided screen only when the
 reasoning is correct. Those notes, the automatic assessment and the persistent

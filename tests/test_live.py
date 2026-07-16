@@ -69,6 +69,9 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "guided case investigation" in html
     assert "learning objectives" in html
     assert "learning path" in html
+    assert "evidence desk" in html
+    assert "navigate the synthetic evidence without leaving guided training" in html
+    assert "data-training-evidence" in html
     assert "reveal next event" in html
     assert "facilitator notes" in html
     assert "training outcome" in html
@@ -89,6 +92,10 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert 'type="file"' not in html
     assert "https://" not in html
     assert "http://" not in html
+    guide = html[html.index("function rendertrainingguide") :]
+    assert guide.index("$('training-step-content').innerhtml = content;") < guide.index(
+        "trainingevidencepanel(payload);"
+    )
 
 
 def test_evidence_markdown_contains_scope() -> None:
