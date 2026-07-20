@@ -529,37 +529,61 @@ TRAINING_MODULES: list[TrainingModule] = [
                 ),
             },
             {
-                "flow_id": "timeline",
-                "title": "Observe the timeline",
+                "flow_id": "timeline-exercise",
+                "title": "Lab activity: timeline",
                 "instruction": (
-                    "Reveal the events one at a time. Identify at least one event that adds "
-                    "context but does not by itself justify escalation."
+                    "Reveal the synthetic events in the Evidence desk. Decide which ones "
+                    "matter before moving to the knowledge check."
                 ),
             },
             {
-                "flow_id": "entities",
-                "title": "Correlate the entities",
+                "flow_id": "timeline-check",
+                "title": "Knowledge check: timeline",
                 "instruction": (
-                    "Review the account, IP address and host. Look for the values shared by "
-                    "the cloud and endpoint events."
+                    "Answer from the evidence you have just reviewed. The Evidence desk is "
+                    "deliberately hidden on this screen."
                 ),
             },
             {
-                "flow_id": "rule",
-                "title": "Understand the alert",
+                "flow_id": "entities-exercise",
+                "title": "Lab activity: entities",
                 "instruction": (
-                    "Continue the timeline until the local evaluator reaches Alert, then read "
-                    "which fields and entities made the correlation meaningful."
+                    "Use the Entities view in the Evidence desk to identify the values that "
+                    "connect the cloud and endpoint records."
                 ),
             },
             {
-                "flow_id": "triage",
-                "title": "Complete the triage",
+                "flow_id": "entities-check",
+                "title": "Knowledge check: entities",
                 "instruction": (
-                    "Choose the next defensible analyst action from the evidence. Record the "
-                    "account, source IP, host, MFA context and cross-source correlation "
-                    "before you decide."
+                    "Answer from the entity correlation you have completed."
                 ),
+            },
+            {
+                "flow_id": "rule-exercise",
+                "title": "Lab activity: rule evaluation",
+                "instruction": (
+                    "Continue revealing events in the Timeline and inspect Rule evaluation "
+                    "until the local evaluator reaches Alert."
+                ),
+            },
+            {
+                "flow_id": "rule-check",
+                "title": "Knowledge check: alert logic",
+                "instruction": "Explain the alert using the evidence you have reviewed.",
+            },
+            {
+                "flow_id": "triage-exercise",
+                "title": "Lab activity: triage",
+                "instruction": (
+                    "Review the Incident, Entities and Rule evaluation views before deciding "
+                    "what a careful analyst should do next."
+                ),
+            },
+            {
+                "flow_id": "triage-check",
+                "title": "Knowledge check: triage",
+                "instruction": "Choose the next defensible analyst action from the evidence.",
             },
             {
                 "flow_id": "close",
@@ -581,7 +605,7 @@ TRAINING_MODULES: list[TrainingModule] = [
         questions=[
             {
                 "question_id": "identify-benign",
-                "flow_id": "timeline",
+                "flow_id": "timeline-check",
                 "checkpoint_id": "observe-noise",
                 "minimum_events": 4,
                 "prompt": (
@@ -613,7 +637,7 @@ TRAINING_MODULES: list[TrainingModule] = [
             },
             {
                 "question_id": "correlate-entities",
-                "flow_id": "entities",
+                "flow_id": "entities-check",
                 "checkpoint_id": "find-signal",
                 "minimum_events": 4,
                 "prompt": "Which account and IP pair connects the cloud and Windows evidence?",
@@ -643,7 +667,7 @@ TRAINING_MODULES: list[TrainingModule] = [
             },
             {
                 "question_id": "explain-rule",
-                "flow_id": "rule",
+                "flow_id": "rule-check",
                 "checkpoint_id": "review-rule",
                 "requires_alert": True,
                 "prompt": "Which sequence explains why SENT-006 alerts?",
@@ -679,7 +703,7 @@ TRAINING_MODULES: list[TrainingModule] = [
             },
             {
                 "question_id": "choose-triage",
-                "flow_id": "triage",
+                "flow_id": "triage-check",
                 "checkpoint_id": "complete-tasks",
                 "prompt": (
                     "What is the best next analyst action before closing this synthetic case?"
@@ -782,33 +806,58 @@ TRAINING_MODULES: list[TrainingModule] = [
                 ),
             },
             {
-                "flow_id": "timeline",
-                "title": "Observe the timeline",
+                "flow_id": "timeline-exercise",
+                "title": "Lab activity: timeline",
                 "instruction": (
-                    "Reveal events one at a time and identify the normal sign-in that does "
-                    "not explain the alert."
+                    "Reveal the synthetic sign-ins in the Evidence desk. Identify the MFA "
+                    "sequence before moving to the knowledge check."
                 ),
             },
             {
-                "flow_id": "entities",
-                "title": "Correlate the entities",
-                "instruction": "Find the account and source IP repeated in the MFA sequence.",
+                "flow_id": "timeline-check",
+                "title": "Knowledge check: timeline",
+                "instruction": "Answer from the timeline evidence you have just reviewed.",
             },
             {
-                "flow_id": "rule",
-                "title": "Understand the alert",
+                "flow_id": "entities-exercise",
+                "title": "Lab activity: entities",
                 "instruction": (
-                    "Reach Alert, then explain why the MFA denials and later success are "
-                    "meaningful together."
+                    "Use the Entities view in the Evidence desk to find the repeated "
+                    "account and source IP."
                 ),
             },
             {
-                "flow_id": "triage",
-                "title": "Complete the triage",
+                "flow_id": "entities-check",
+                "title": "Knowledge check: entities",
                 "instruction": (
-                    "Choose the next evidence-led analyst action before you decide how to "
-                    "close the local synthetic case."
+                    "Answer from the Entra entity correlation you have completed."
                 ),
+            },
+            {
+                "flow_id": "rule-exercise",
+                "title": "Lab activity: rule evaluation",
+                "instruction": (
+                    "Continue revealing events in Timeline and inspect Rule evaluation until "
+                    "the local evaluator reaches Alert."
+                ),
+            },
+            {
+                "flow_id": "rule-check",
+                "title": "Knowledge check: alert logic",
+                "instruction": "Explain the repeated MFA alert from the evidence.",
+            },
+            {
+                "flow_id": "triage-exercise",
+                "title": "Lab activity: triage",
+                "instruction": (
+                    "Review Incident, Entities and Rule evaluation before choosing the next "
+                    "evidence-led analyst action."
+                ),
+            },
+            {
+                "flow_id": "triage-check",
+                "title": "Knowledge check: triage",
+                "instruction": "Choose the action you can justify from the case evidence.",
             },
             {
                 "flow_id": "close",
@@ -827,7 +876,7 @@ TRAINING_MODULES: list[TrainingModule] = [
         questions=[
             {
                 "question_id": "identify-benign",
-                "flow_id": "timeline",
+                "flow_id": "timeline-check",
                 "checkpoint_id": "observe-noise",
                 "minimum_events": 3,
                 "prompt": "Which revealed event is expected context rather than the MFA pattern?",
@@ -857,7 +906,7 @@ TRAINING_MODULES: list[TrainingModule] = [
             },
             {
                 "question_id": "correlate-entities",
-                "flow_id": "entities",
+                "flow_id": "entities-check",
                 "checkpoint_id": "find-signal",
                 "minimum_events": 4,
                 "prompt": "Which account and IP pair identifies the MFA sequence?",
@@ -880,7 +929,7 @@ TRAINING_MODULES: list[TrainingModule] = [
             },
             {
                 "question_id": "explain-rule",
-                "flow_id": "rule",
+                "flow_id": "rule-check",
                 "checkpoint_id": "review-rule",
                 "requires_alert": True,
                 "prompt": "Which sequence explains why ENTRA-003 alerts?",
@@ -913,7 +962,7 @@ TRAINING_MODULES: list[TrainingModule] = [
             },
             {
                 "question_id": "choose-triage",
-                "flow_id": "triage",
+                "flow_id": "triage-check",
                 "checkpoint_id": "complete-tasks",
                 "prompt": "What is the best next analyst action before closing this case?",
                 "options": [
@@ -2681,14 +2730,34 @@ def _maximum_training_step(
     completed = {
         str(checkpoint["checkpoint_id"]) for checkpoint in checkpoints if checkpoint["completed"]
     }
+    question_positions = [
+        next(
+            index
+            for index, step in enumerate(module.learning_flow)
+            if step["flow_id"] == question["flow_id"]
+        )
+        for question in module.questions
+    ]
     maximum_step = 1
-    for index, question in enumerate(module.questions, start=1):
+    for question, question_position in zip(module.questions, question_positions, strict=True):
+        if not _question_prerequisites_met(question, case_detail):
+            return min(maximum_step, len(module.learning_flow) - 1)
+        maximum_step = question_position
         if str(question["checkpoint_id"]) not in completed:
             return min(maximum_step, len(module.learning_flow) - 1)
-        maximum_step = index + 1
+        maximum_step = question_position + 1
     if case_detail["run"]["status"] == "Closed":
         maximum_step = len(module.learning_flow) - 1
     return min(maximum_step, len(module.learning_flow) - 1)
+
+
+def _question_prerequisites_met(
+    question: dict[str, object],
+    case_detail: dict[str, object],
+) -> bool:
+    if case_detail["event_count"] < int(question.get("minimum_events", 0)):
+        return False
+    return not question.get("requires_alert") or case_detail["evaluation"]["status"] == "Alert"
 
 
 def _load_instructor_review(
@@ -3057,6 +3126,11 @@ def _render_workbench_app() -> str:
     .guide-options { display: grid; gap: 8px; }
     .guide-options label { display: flex; gap: 8px; align-items: flex-start; }
     .guide-question-feedback { margin: 0; min-height: 1.4em; }
+    .guide-activity {
+      border-left: 4px solid var(--accent);
+      padding: 12px;
+      background: #f8fbff;
+    }
     .evidence-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
     .evidence-nav button.active {
       border-color: var(--accent);
@@ -3871,10 +3945,10 @@ def _render_workbench_app() -> str:
       const step = guide.current;
       const caseRun = payload.case_run;
       const preferredEvidence = {
-        timeline: 'timeline',
-        entities: 'entities',
-        rule: 'rule',
-        triage: 'incident',
+        'timeline-exercise': 'timeline',
+        'entities-exercise': 'entities',
+        'rule-exercise': 'rule',
+        'triage-exercise': 'incident',
         close: 'incident',
         outcome: 'incident'
       };
@@ -3897,7 +3971,7 @@ def _render_workbench_app() -> str:
         ? `Continue: ${nextStep.title}`
         : 'Training complete';
       $('training-outcome').hidden = step.flow_id !== 'outcome';
-      $('training-evidence').hidden = step.flow_id === 'briefing' || step.flow_id === 'outcome';
+      $('training-evidence').hidden = !step.flow_id.endsWith('-exercise');
       const caseClosed = caseRun.run.status === 'Closed';
       $('facilitator-notes').hidden = step.flow_id !== 'outcome' || !caseClosed;
       $('facilitator-review').hidden = step.flow_id !== 'outcome' || !caseClosed;
@@ -3907,14 +3981,12 @@ def _render_workbench_app() -> str:
         content = `<div><strong>Case:</strong> ${h(caseRun.case.case_id)} - ` +
           `${h(caseRun.case.title)}</div>` +
           `<div><strong>Primary detection:</strong> ${h(caseRun.case.primary_detection)}</div>`;
-      } else if (step.flow_id === 'timeline') {
-        content = trainingQuestionControl(payload, 'timeline');
-      } else if (step.flow_id === 'entities') {
-        content = trainingQuestionControl(payload, 'entities');
-      } else if (step.flow_id === 'rule') {
-        content = trainingQuestionControl(payload, 'rule');
-      } else if (step.flow_id === 'triage') {
-        content = trainingQuestionControl(payload, 'triage');
+      } else if (step.flow_id.endsWith('-exercise')) {
+        content = '<div class="guide-activity"><strong>Laboratory activity</strong><br>' +
+          'Use the Evidence desk below. Continue becomes available when the required ' +
+          'synthetic evidence has been revealed.</div>';
+      } else if (step.flow_id.endsWith('-check')) {
+        content = trainingQuestionControl(payload, step.flow_id);
       } else if (step.flow_id === 'close') {
         content = `<select id="training-case-decision"><option>Suspicious</option>` +
           `<option>Escalated</option><option>Benign</option><option>Closed</option></select>` +

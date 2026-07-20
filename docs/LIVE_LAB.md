@@ -84,7 +84,10 @@ so a learner can refresh the browser and resume without restarting the case.
 
 The guided screen includes an internal `Evidence desk` with Timeline, Entities,
 Incident and Rule evaluation tabs. Learners can inspect those views while staying
-inside the lesson; the Timeline question is shown before any events are revealed.
+inside the lesson. Each objective uses two screens: a `Lab activity` screen with
+the Evidence desk, followed by a separate `Knowledge check` screen with no
+evidence panel. The Timeline question is therefore never displayed beside the
+events used to answer it.
 
 Progressive hints remain available without revealing the facilitator notes. Each
 decision records attempts locally and unlocks the next guided screen only when the

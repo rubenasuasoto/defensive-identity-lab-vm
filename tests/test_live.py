@@ -72,6 +72,8 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "evidence desk" in html
     assert "navigate the synthetic evidence without leaving guided training" in html
     assert "data-training-evidence" in html
+    assert "step.flow_id.endswith('-exercise')" in html
+    assert "step.flow_id.endswith('-check')" in html
     assert "reveal next event" in html
     assert "facilitator notes" in html
     assert "training outcome" in html
@@ -277,7 +279,9 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     assert state["module"]["case_id"] == "CASE-001"
     assert state["module"]["instructor_brief"]
     assert len(state["module"]["assessment"]) == 3
-    assert len(state["module"]["learning_flow"]) == 7
+    assert len(state["module"]["learning_flow"]) == 11
+    assert state["module"]["learning_flow"][1]["flow_id"] == "timeline-exercise"
+    assert state["module"]["learning_flow"][2]["flow_id"] == "timeline-check"
     assert len(state["questions"]) == 4
     assert state["run"]["status"] == "In progress"
     assert len(state["checkpoints"]) == 5
@@ -290,10 +294,13 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
 
     state = set_training_guide_step(training_run_id, 3, db_path)
     assert state["guide"]["current_step"] == 1
-    assert state["guide"]["current"]["flow_id"] == "timeline"
+    assert state["guide"]["current"]["flow_id"] == "timeline-exercise"
 
     for _ in range(4):
         tick_case_run(case_run_id, db_path)
+
+    state = set_training_guide_step(training_run_id, 2, db_path)
+    assert state["guide"]["current"]["flow_id"] == "timeline-check"
 
     state = submit_training_answer(
         training_run_id,
@@ -318,25 +325,29 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
         for checkpoint in state["checkpoints"]
     )
 
-    state = set_training_guide_step(training_run_id, 2, db_path)
+    state = set_training_guide_step(training_run_id, 4, db_path)
+    assert state["guide"]["current"]["flow_id"] == "entities-check"
     state = submit_training_answer(
         training_run_id,
         "correlate-entities",
         "alex-shared-ip",
         db_path,
     )
-    state = set_training_guide_step(training_run_id, 3, db_path)
-    assert state["guide"]["current"]["flow_id"] == "rule"
+    state = set_training_guide_step(training_run_id, 5, db_path)
+    assert state["guide"]["current"]["flow_id"] == "rule-exercise"
 
     for _ in range(4):
         tick_case_run(case_run_id, db_path)
+    state = set_training_guide_step(training_run_id, 6, db_path)
+    assert state["guide"]["current"]["flow_id"] == "rule-check"
     state = submit_training_answer(
         training_run_id,
         "explain-rule",
         "correlated-sequence",
         db_path,
     )
-    state = set_training_guide_step(training_run_id, 4, db_path)
+    state = set_training_guide_step(training_run_id, 8, db_path)
+    assert state["guide"]["current"]["flow_id"] == "triage-check"
     state = submit_training_answer(
         training_run_id,
         "choose-triage",
