@@ -68,7 +68,9 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert 'data-view-panel="incidents"' in html
     assert "guided case investigation" in html
     assert "learning objectives" in html
+    assert "training-objectives-modal" in html
     assert "learning path" in html
+    assert "guide-step-marker" in html
     assert "evidence desk" in html
     assert "navigate the synthetic evidence without leaving guided training" in html
     assert "data-training-evidence" in html
@@ -76,6 +78,8 @@ def test_live_app_is_local_and_self_contained() -> None:
     assert "step.flow_id.endswith('-check')" in html
     assert "reveal next event" in html
     assert "facilitator notes" in html
+    assert "facilitator review" not in html
+    assert "instructor-review-save" not in html
     assert "training outcome" in html
     assert "hint" in html
     assert "feedback" in html

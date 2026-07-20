@@ -3104,14 +3104,44 @@ def _render_workbench_app() -> str:
       gap: 16px;
       align-items: start;
     }
-    .guide-progress { display: grid; gap: 8px; }
-    .guide-progress div {
-      border-left: 4px solid var(--line);
-      padding: 8px 10px;
-      background: #f8fbff;
+    .guide-progress { display: grid; gap: 0; position: relative; }
+    .guide-progress::before {
+      content: '';
+      position: absolute;
+      top: 18px;
+      bottom: 18px;
+      left: 15px;
+      width: 2px;
+      background: var(--line);
     }
-    .guide-progress div.current { border-left-color: var(--accent); }
-    .guide-progress div.complete { border-left-color: var(--ok); }
+    .guide-step {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    .guide-step:last-child { border-bottom: 0; }
+    .guide-step-marker {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border: 2px solid var(--line);
+      border-radius: 50%;
+      background: white;
+      color: var(--muted);
+      font-size: .8rem;
+      font-weight: 700;
+    }
+    .guide-step small { display: block; color: var(--muted); margin-top: 3px; }
+    .guide-step.current { background: #eef6ff; }
+    .guide-step.current .guide-step-marker { border-color: var(--accent); color: var(--accent); }
+    .guide-step.complete .guide-step-marker { border-color: var(--ok); color: var(--ok); }
+    .guide-step.locked { opacity: .62; }
     .guide-action { display: grid; gap: 12px; }
     .guide-nav { display: flex; gap: 8px; flex-wrap: wrap; }
     .guide-nav button { min-width: 120px; }
@@ -3137,6 +3167,30 @@ def _render_workbench_app() -> str:
       box-shadow: inset 3px 0 0 var(--accent);
     }
     .evidence-desk { margin-top: 12px; min-height: 120px; }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(20, 36, 56, .45);
+    }
+    .modal-backdrop[hidden] { display: none; }
+    .modal {
+      width: min(620px, 100%);
+      max-height: min(700px, calc(100vh - 40px));
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      background: white;
+      box-shadow: 0 18px 48px rgba(20, 36, 56, .28);
+    }
+    .modal-header { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+    .modal-header h2 { margin: 0; }
+    .objective-list { display: grid; gap: 10px; margin-top: 18px; }
+    .objective-list div { border-left: 3px solid var(--accent); padding-left: 10px; }
     .case-grid .wide { grid-column: 1 / -1; }
     .event-list {
       display: grid;
@@ -3399,6 +3453,7 @@ def _render_workbench_app() -> str:
         <strong>Choose a training case</strong>
         <select id="training-select"></select>
         <button id="training-start" class="primary">Start guided training</button>
+        <button id="training-objectives-open">Learning objectives</button>
         <button id="training-hint">Hint</button>
         <button id="training-export-json">Export training JSON</button>
         <button id="training-export-md">Export training MD</button>
@@ -3408,8 +3463,6 @@ def _render_workbench_app() -> str:
         <div class="panel">
           <h2>Learning path</h2>
           <div id="training-progress" class="guide-progress"></div>
-          <h3>Learning objectives</h3>
-          <div id="learning-objectives" class="kv"></div>
         </div>
         <div class="panel">
           <p id="training-step-count" class="pill">Step 0</p>
@@ -3437,21 +3490,23 @@ def _render_workbench_app() -> str:
               <p id="facilitator-note-text"></p>
             </details>
           </div>
-          <div id="facilitator-review" class="note-form" hidden>
-            <h3>Facilitator review</h3>
-            <select id="instructor-rating">
-              <option>Needs guided practice</option>
-              <option>Developing</option>
-              <option>Ready for independent review</option>
-            </select>
-            <textarea id="instructor-observation" placeholder="Facilitator observation"></textarea>
-            <button id="instructor-review-save">Save facilitator review</button>
-            <p id="instructor-review-status"></p>
-          </div>
         </div>
       </section>
     </section>
   </main>
+  <div id="training-objectives-modal" class="modal-backdrop" hidden>
+    <section class="modal" role="dialog" aria-modal="true"
+      aria-labelledby="training-objectives-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="training-objectives-title">Learning objectives</h2>
+          <p id="training-objectives-summary"></p>
+        </div>
+        <button id="training-objectives-close">Close</button>
+      </div>
+      <div id="training-objectives-list" class="objective-list"></div>
+    </section>
+  </div>
   <script>
     const state = {
       scenarios: [],
@@ -3462,6 +3517,7 @@ def _render_workbench_app() -> str:
       cases: [],
       activeCaseRun: null,
       trainingModules: [],
+      selectedTrainingModule: null,
       activeTraining: null,
       trainingEvidenceView: 'timeline',
       trainingGuideFlow: '',
@@ -3514,12 +3570,13 @@ def _render_workbench_app() -> str:
     }
 
     function renderTrainingModulePreview(module) {
-      $('learning-objectives').innerHTML = module.objectives.map((objective) =>
-        `<div>${h(objective)}</div>`
-      ).join('');
+      state.selectedTrainingModule = module;
       $('training-progress').innerHTML = module.learning_flow.map((step, index) =>
-        `<div><strong>${index + 1}. ${h(step.title)}</strong><br>` +
-        `<small>${h(step.instruction)}</small></div>`
+        `<div class="guide-step ${index === 0 ? 'current' : 'locked'}">` +
+        `<span class="guide-step-marker">${index + 1}</span><div>` +
+        `<strong>${h(step.title)}</strong><small>` +
+        `${index === 0 ? 'Ready to start' : 'Locked'}</small>` +
+        `</div></div>`
       ).join('');
       $('training-step-count').textContent = 'Choose a case';
       $('training-step-title').textContent = module.title;
@@ -3532,7 +3589,6 @@ def _render_workbench_app() -> str:
       $('training-evidence-nav').innerHTML = '';
       $('training-evidence-panel').innerHTML = '';
       $('training-outcome').hidden = true;
-      $('facilitator-review').hidden = true;
       $('facilitator-notes').hidden = true;
       $('training-back').disabled = true;
       $('training-next').disabled = true;
@@ -3547,7 +3603,32 @@ def _render_workbench_app() -> str:
       });
       const payload = await response.json();
       renderTrainingRun(payload);
+      openTrainingObjectives(payload.module);
       await loadIncidents(payload.case_run.incident ? payload.case_run.incident.id : null);
+    }
+
+    function openTrainingObjectives(module) {
+      if (!module) return;
+      state.selectedTrainingModule = module;
+      $('training-objectives-summary').textContent = module.summary;
+      $('training-objectives-list').innerHTML = module.objectives.map((objective, index) =>
+        `<div><strong>${index + 1}.</strong> ${h(objective)}</div>`
+      ).join('');
+      $('training-objectives-modal').hidden = false;
+      $('training-objectives-close').focus();
+    }
+
+    function closeTrainingObjectives() {
+      $('training-objectives-modal').hidden = true;
+    }
+
+    function openSelectedTrainingObjectives() {
+      const module = state.activeTraining
+        ? state.activeTraining.module
+        : state.selectedTrainingModule || state.trainingModules.find(
+          (item) => item.module_id === $('training-select').value
+        );
+      openTrainingObjectives(module);
     }
 
     async function loadTrainingRun(id) {
@@ -3639,12 +3720,12 @@ def _render_workbench_app() -> str:
       state.incident = null;
       state.activeCaseRun = null;
       state.activeTraining = null;
+      state.selectedTrainingModule = null;
       state.trainingEvidenceView = 'timeline';
       state.trainingGuideFlow = '';
       $('case-status').textContent = 'No active case.';
       $('training-status').textContent = 'Choose a case to begin.';
       $('case-tasks').innerHTML = '';
-      $('learning-objectives').innerHTML = '';
       $('training-progress').innerHTML = '';
       $('training-step-count').textContent = 'Step 0';
       $('training-step-title').textContent = 'Choose a case';
@@ -3657,15 +3738,12 @@ def _render_workbench_app() -> str:
       $('training-feedback').textContent = 'Guidance will appear here as you progress.';
       $('training-hint-output').textContent = '';
       $('training-outcome').hidden = true;
-      $('facilitator-review').hidden = true;
       $('facilitator-notes').hidden = true;
       $('training-back').disabled = true;
       $('training-next').disabled = true;
       $('instructor-score').textContent = 'No active training score.';
       $('instructor-assessment').innerHTML = '';
-      $('instructor-rating').value = 'Developing';
-      $('instructor-observation').value = '';
-      $('instructor-review-status').textContent = '';
+      closeTrainingObjectives();
       $('case-note-status').textContent = '';
       await loadIncidents();
       if (state.scenario) {
@@ -3818,12 +3896,10 @@ def _render_workbench_app() -> str:
 
     function renderTrainingRun(payload) {
       state.activeTraining = payload;
+      state.selectedTrainingModule = payload.module;
       renderCaseRun(payload.case_run);
       $('training-status').textContent =
         `${payload.module.module_id} run ${payload.run.id} | ${payload.run.status}`;
-      $('learning-objectives').innerHTML = payload.module.objectives.map((objective) =>
-        `<div>${h(objective)}</div>`
-      ).join('');
       $('training-feedback').textContent = payload.feedback;
       $('facilitator-note-text').textContent = payload.module.facilitator_notes;
       $('training-hint-output').textContent = payload.latest_hint
@@ -3838,19 +3914,6 @@ def _render_workbench_app() -> str:
         `${h(criterion.points)}/${h(criterion.max_points)} pts | ${h(criterion.status)}</div>`
       ).join('') + `<div><strong>Recommendation</strong><br>` +
         `${h(payload.instructor.recommendation)}</div>`;
-      const allowedRatings = [
-        'Needs guided practice',
-        'Developing',
-        'Ready for independent review'
-      ];
-      const suggestedRating = allowedRatings.includes(payload.instructor.readiness)
-        ? payload.instructor.readiness
-        : 'Developing';
-      $('instructor-rating').value = payload.review ? payload.review.rating : suggestedRating;
-      $('instructor-observation').value = payload.review ? payload.review.observation : '';
-      $('instructor-review-status').textContent = payload.review
-        ? `Review saved: ${payload.review.rating}`
-        : '';
     }
 
     function trainingEntities(entities) {
@@ -3957,8 +4020,15 @@ def _render_workbench_app() -> str:
         state.trainingGuideFlow = step.flow_id;
       }
       $('training-progress').innerHTML = guide.steps.map((item) =>
-        `<div class="${h(item.state)}"><strong>${h(item.position)}. ${h(item.title)}</strong><br>` +
-        `<small>${h(item.state === 'current' ? item.instruction : item.state)}</small></div>`
+        `<div class="guide-step ${h(item.state)}">` +
+        `<span class="guide-step-marker">${h(item.position)}</span><div>` +
+        `<strong>${h(item.title)}</strong><small>${h(
+          item.state === 'current'
+            ? 'In progress'
+            : item.state === 'complete'
+            ? 'Completed'
+            : 'Locked'
+        )}</small></div></div>`
       ).join('');
       $('training-step-count').textContent =
         `Step ${guide.current_step + 1} of ${guide.total_steps}`;
@@ -3974,7 +4044,6 @@ def _render_workbench_app() -> str:
       $('training-evidence').hidden = !step.flow_id.endsWith('-exercise');
       const caseClosed = caseRun.run.status === 'Closed';
       $('facilitator-notes').hidden = step.flow_id !== 'outcome' || !caseClosed;
-      $('facilitator-review').hidden = step.flow_id !== 'outcome' || !caseClosed;
 
       let content = '';
       if (step.flow_id === 'briefing') {
@@ -4244,27 +4313,6 @@ def _render_workbench_app() -> str:
       renderTrainingRun(await response.json());
     }
 
-    async function saveInstructorReview() {
-      if (!state.activeTraining) {
-        $('instructor-review-status').textContent = 'Close a guided training case first.';
-        return;
-      }
-      const response = await fetch(
-        `/api/training/${state.activeTraining.run.id}/instructor-review`,
-        {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            rating: $('instructor-rating').value,
-            observation: $('instructor-observation').value
-          })
-        }
-      );
-      const payload = await response.json();
-      renderTrainingRun(payload);
-      $('instructor-review-status').textContent = `Review saved: ${payload.review.rating}`;
-    }
-
     async function closeCase() {
       if (!state.activeCaseRun) {
         $('case-note-status').textContent = 'Start a case run first.';
@@ -4315,12 +4363,16 @@ def _render_workbench_app() -> str:
     $('filter-severity').addEventListener('change', () => loadIncidents());
     $('filter-entity').addEventListener('input', () => loadIncidents());
     $('training-start').addEventListener('click', startTrainingRun);
+    $('training-objectives-open').addEventListener('click', openSelectedTrainingObjectives);
+    $('training-objectives-close').addEventListener('click', closeTrainingObjectives);
+    $('training-objectives-modal').addEventListener('click', (event) => {
+      if (event.target === $('training-objectives-modal')) closeTrainingObjectives();
+    });
     $('training-hint').addEventListener('click', requestHint);
     $('training-export-json').addEventListener('click', () => exportTrainingEvidence('json'));
     $('training-export-md').addEventListener('click', () => exportTrainingEvidence('md'));
     $('training-back').addEventListener('click', () => moveTrainingGuide(-1));
     $('training-next').addEventListener('click', () => moveTrainingGuide(1));
-    $('instructor-review-save').addEventListener('click', saveInstructorReview);
     $('case-start').addEventListener('click', startCaseRun);
     $('case-tick').addEventListener('click', tickCaseRun);
     $('case-export-json').addEventListener('click', () => exportCaseEvidence('json'));
@@ -4334,6 +4386,9 @@ def _render_workbench_app() -> str:
     });
     document.querySelectorAll('[data-open-view]').forEach((button) => {
       button.addEventListener('click', () => setView(button.dataset.openView));
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeTrainingObjectives();
     });
     setView('overview');
     loadScenarios();

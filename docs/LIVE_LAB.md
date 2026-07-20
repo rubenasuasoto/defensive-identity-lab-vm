@@ -89,11 +89,13 @@ the Evidence desk, followed by a separate `Knowledge check` screen with no
 evidence panel. The Timeline question is therefore never displayed beside the
 events used to answer it.
 
-Progressive hints remain available without revealing the facilitator notes. Each
-decision records attempts locally and unlocks the next guided screen only when the
-reasoning is correct. Those notes, the automatic assessment and the persistent
-facilitator review appear only on the final outcome screen after case closure. The
-`Case run` and `Incidents` views remain available as free-practice Workbench tools.
+Learning objectives open in a modal when a learner starts a case and remain
+available from the `Learning objectives` button. Progressive hints remain
+available without revealing the facilitator notes. Each decision records attempts
+locally and unlocks the next guided screen only when the reasoning is correct.
+The final outcome contains feedback, assessment and lesson notes, but no
+facilitator-review controls. The `Case run` and `Incidents` views remain available
+as free-practice Workbench tools.
 
 Expected decisions are `Suspicious` or `Escalated`. Closing as `Benign` produces corrective feedback because the correlated cloud and endpoint evidence should be investigated.
 
