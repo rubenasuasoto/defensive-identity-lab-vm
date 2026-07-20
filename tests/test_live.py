@@ -285,7 +285,7 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     assert state["guide"]["current_step"] == 0
     assert state["guide"]["current"]["flow_id"] == "briefing"
     assert state["instructor"]["mode"] == "Guided Training"
-    assert state["instructor"]["version"] == "0.8.0"
+    assert state["instructor"]["version"] == "0.9.0"
     assert state["instructor"]["score"] == 0
 
     state = set_training_guide_step(training_run_id, 3, db_path)
@@ -367,6 +367,31 @@ def test_training_run_guides_case_workflow(tmp_path: Path) -> None:
     assert "Training assessment" in markdown
     assert "Learning objectives" in markdown
     assert "Correlated identity activity" in markdown or "Good call" in markdown
+
+
+def test_second_training_module_uses_entra_mfa_case(tmp_path: Path) -> None:
+    db_path = tmp_path / "live.sqlite"
+
+    index = training_index(db_path)
+    assert {module["module_id"] for module in index["modules"]} == {
+        "TRAIN-001",
+        "TRAIN-002",
+    }
+
+    state = start_training_run("TRAIN-002", db_path)
+    training_run_id = int(state["run"]["id"])
+    case_run_id = int(state["case_run"]["run"]["id"])
+
+    assert state["module"]["case_id"] == "CASE-002"
+    assert state["case_run"]["case"]["primary_detection"] == "ENTRA-003"
+    assert "MFA denials" in state["module"]["facilitator_notes"]
+
+    for _ in range(5):
+        state = tick_case_run(case_run_id, db_path)
+
+    assert state["evaluation"]["status"] == "Alert"
+    assert state["incident"]["detection"] == "ENTRA-003"
+    assert training_run_detail(training_run_id, db_path)["case_run"]["complete"] is True
 
 
 def test_training_feedback_corrects_benign_close(tmp_path: Path) -> None:

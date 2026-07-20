@@ -69,8 +69,9 @@ The case remains local in `live_lab.sqlite` until `Reset runtime state` is used.
 
 ## Guided Training v0.8.0
 
-`TRAIN-001` teaches the same `CASE-001` workflow for beginner SOC analysts. It is
-now a guided case journey rather than a collection of separate panels:
+`TRAIN-001` teaches the `CASE-001` cross-source workflow and `TRAIN-002` teaches
+the `CASE-002` Entra MFA-denial workflow. Both are guided case journeys rather
+than collections of separate panels:
 
 - Choose a synthetic case and read the briefing.
 - Reveal timeline events and identify benign context by choosing the event that is unrelated.
@@ -92,6 +93,10 @@ facilitator review appear only on the final outcome screen after case closure. T
 `Case run` and `Incidents` views remain available as free-practice Workbench tools.
 
 Expected decisions are `Suspicious` or `Escalated`. Closing as `Benign` produces corrective feedback because the correlated cloud and endpoint evidence should be investigated.
+
+`TRAIN-002` uses only synthetic Entra-style events: two MFA denials followed by a
+success for the same account and IP. It has no tenant connection, token, live
+Graph call or real authentication data.
 
 ## Local state
 

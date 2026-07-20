@@ -121,6 +121,9 @@ Each guided step keeps an internal Evidence desk for the timeline, entities,
 incident and rule evaluation, so learners can inspect the evidence they need
 without leaving the lesson.
 
+`TRAIN-002` adds a second synthetic Entra lesson: repeated MFA denials followed
+by success for the same account and source IP.
+
 Remove it with:
 
 ```powershell

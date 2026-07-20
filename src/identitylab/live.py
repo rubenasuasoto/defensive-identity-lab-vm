@@ -68,6 +68,7 @@ class TrainingModule:
     assessment: list[dict[str, object]]
     learning_flow: list[dict[str, str]]
     questions: list[dict[str, object]]
+    facilitator_notes: str
 
 
 SCENARIOS: list[LiveScenario] = [
@@ -361,7 +362,85 @@ SOC_CASES: list[SocCase] = [
             {"task_id": "review-mfa", "label": "Check MFA and Conditional Access context."},
             {"task_id": "review-correlation", "label": "Confirm Entra and Windows correlation."},
         ],
-    )
+    ),
+    SocCase(
+        case_id="CASE-002",
+        title="MFA denial investigation",
+        summary=(
+            "A synthetic Entra sign-in case with normal activity, repeated MFA denials "
+            "and a later success for one account."
+        ),
+        primary_detection="ENTRA-003",
+        severity="Medium",
+        events=[
+            {
+                "offset": 0,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "nora.patel@example.test",
+                "ip": "198.51.100.31",
+                "host": "-",
+                "result": "success",
+                "severity": "Informational",
+                "classification": "benign",
+                "detail": "Expected browser sign-in from a known source.",
+            },
+            {
+                "offset": 5,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "sam.taylor@example.test",
+                "ip": "203.0.113.77",
+                "host": "-",
+                "result": "mfa_denied",
+                "severity": "Medium",
+                "classification": "signal",
+                "detail": "MFA challenge denied for the same user and source IP.",
+            },
+            {
+                "offset": 11,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "helpdesk.admin@example.test",
+                "ip": "198.51.100.44",
+                "host": "-",
+                "result": "success",
+                "severity": "Low",
+                "classification": "benign",
+                "detail": "Expected helpdesk sign-in from an approved source.",
+            },
+            {
+                "offset": 16,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "sam.taylor@example.test",
+                "ip": "203.0.113.77",
+                "host": "-",
+                "result": "mfa_denied",
+                "severity": "Medium",
+                "classification": "signal",
+                "detail": "Second MFA challenge denied for the same user and source IP.",
+            },
+            {
+                "offset": 25,
+                "table": "SigninLogs",
+                "source": "Entra",
+                "account": "sam.taylor@example.test",
+                "ip": "203.0.113.77",
+                "host": "-",
+                "result": "success",
+                "severity": "High",
+                "classification": "signal",
+                "detail": "Successful sign-in after repeated MFA denials.",
+            },
+        ],
+        tasks=[
+            {"task_id": "review-account", "label": "Review the affected account context."},
+            {"task_id": "review-ip", "label": "Review the source IP context."},
+            {"task_id": "review-mfa", "label": "Review the MFA sequence."},
+            {"task_id": "review-correlation", "label": "Confirm the repeated denial pattern."},
+        ],
+    ),
 ]
 
 
@@ -506,8 +585,7 @@ TRAINING_MODULES: list[TrainingModule] = [
                 "checkpoint_id": "observe-noise",
                 "minimum_events": 4,
                 "prompt": (
-                    "Which revealed event is unrelated benign context for this "
-                    "investigation?"
+                    "Which revealed event is unrelated benign context for this investigation?"
                 ),
                 "options": [
                     {
@@ -604,8 +682,7 @@ TRAINING_MODULES: list[TrainingModule] = [
                 "flow_id": "triage",
                 "checkpoint_id": "complete-tasks",
                 "prompt": (
-                    "What is the best next analyst action before closing this synthetic "
-                    "case?"
+                    "What is the best next analyst action before closing this synthetic case?"
                 ),
                 "options": [
                     {
@@ -618,8 +695,7 @@ TRAINING_MODULES: list[TrainingModule] = [
                     {
                         "value": "mark-all-benign",
                         "label": (
-                            "Mark every timeline event benign because some are expected "
-                            "activity."
+                            "Mark every timeline event benign because some are expected activity."
                         ),
                     },
                     {
@@ -638,7 +714,242 @@ TRAINING_MODULES: list[TrainingModule] = [
                 ),
             },
         ],
-    )
+        facilitator_notes=(
+            "The alert is justified by a high-risk Entra sign-in, repeated Windows "
+            "failures and a later successful logon for the same account and source IP. "
+            "The unrelated benign events add context but do not cancel that correlation."
+        ),
+    ),
+    TrainingModule(
+        module_id="TRAIN-002",
+        title="Investigating repeated MFA denials",
+        audience="Beginner SOC analysts",
+        case_id="CASE-002",
+        summary=(
+            "Guided lesson for distinguishing expected Entra activity from repeated "
+            "MFA denials followed by a successful sign-in."
+        ),
+        instructor_brief=(
+            "Coach the learner to inspect a single cloud identity, establish the MFA "
+            "sequence and record a defensible decision without taking host actions."
+        ),
+        objectives=[
+            "Separate expected cloud activity from a repeated MFA denial sequence.",
+            "Correlate the affected Entra account and source IP.",
+            "Explain why an MFA denial followed by success deserves review.",
+            "Close the synthetic case with an evidence-led analyst note.",
+        ],
+        guided_steps=[
+            {"step_id": "observe-noise", "label": "Correctly identify expected activity."},
+            {"step_id": "find-signal", "label": "Correctly correlate the Entra account and IP."},
+            {"step_id": "review-rule", "label": "Correctly explain the MFA alert condition."},
+            {"step_id": "complete-tasks", "label": "Choose the appropriate triage action."},
+            {
+                "step_id": "close-case",
+                "label": "Close the case as Suspicious or Escalated with a note.",
+            },
+        ],
+        hints=[
+            "Start with the account and IP that repeat rather than treating every sign-in alike.",
+            "The local evaluator needs two MFA denials and a later success for the same values.",
+            "A good note distinguishes the normal sign-ins from the repeated MFA sequence.",
+        ],
+        expected_decisions=["Suspicious", "Escalated"],
+        assessment=[
+            {
+                "name": "Analyst decisions",
+                "max_points": 6,
+                "description": "Learner makes defensible decisions from the evidence.",
+            },
+            {
+                "name": "Evidence recognition",
+                "max_points": 2,
+                "description": "Learner reaches the alert and reviews the incident evidence.",
+            },
+            {
+                "name": "Final decision",
+                "max_points": 2,
+                "description": "Learner closes as Suspicious or Escalated with a note.",
+            },
+        ],
+        learning_flow=[
+            {
+                "flow_id": "briefing",
+                "title": "Case briefing",
+                "instruction": (
+                    "You are reviewing synthetic Entra sign-ins. Separate expected activity "
+                    "from a sequence that needs analyst attention."
+                ),
+            },
+            {
+                "flow_id": "timeline",
+                "title": "Observe the timeline",
+                "instruction": (
+                    "Reveal events one at a time and identify the normal sign-in that does "
+                    "not explain the alert."
+                ),
+            },
+            {
+                "flow_id": "entities",
+                "title": "Correlate the entities",
+                "instruction": "Find the account and source IP repeated in the MFA sequence.",
+            },
+            {
+                "flow_id": "rule",
+                "title": "Understand the alert",
+                "instruction": (
+                    "Reach Alert, then explain why the MFA denials and later success are "
+                    "meaningful together."
+                ),
+            },
+            {
+                "flow_id": "triage",
+                "title": "Complete the triage",
+                "instruction": (
+                    "Choose the next evidence-led analyst action before you decide how to "
+                    "close the local synthetic case."
+                ),
+            },
+            {
+                "flow_id": "close",
+                "title": "Close the case",
+                "instruction": (
+                    "Write a short note that explains the repeated MFA sequence, then close "
+                    "the case as Suspicious or Escalated."
+                ),
+            },
+            {
+                "flow_id": "outcome",
+                "title": "Review the outcome",
+                "instruction": "Review your feedback, assessment and facilitator notes.",
+            },
+        ],
+        questions=[
+            {
+                "question_id": "identify-benign",
+                "flow_id": "timeline",
+                "checkpoint_id": "observe-noise",
+                "minimum_events": 3,
+                "prompt": "Which revealed event is expected context rather than the MFA pattern?",
+                "options": [
+                    {
+                        "value": "nora-normal-sign-in",
+                        "label": "t+0 expected sign-in for nora.patel from 198.51.100.31.",
+                    },
+                    {
+                        "value": "sam-mfa-denial",
+                        "label": "t+5 MFA denial for sam.taylor from 203.0.113.77.",
+                    },
+                    {
+                        "value": "sam-later-denial",
+                        "label": "t+16 second MFA denial for sam.taylor from 203.0.113.77.",
+                    },
+                ],
+                "correct_answer": "nora-normal-sign-in",
+                "feedback_correct": (
+                    "Correct. That expected sign-in does not share the MFA sequence "
+                    "entities."
+                ),
+                "feedback_retry": (
+                    "Not yet. Look for the event that is not part of the repeated "
+                    "account and IP pattern."
+                ),
+            },
+            {
+                "question_id": "correlate-entities",
+                "flow_id": "entities",
+                "checkpoint_id": "find-signal",
+                "minimum_events": 4,
+                "prompt": "Which account and IP pair identifies the MFA sequence?",
+                "options": [
+                    {"value": "sam-mfa-ip", "label": "sam.taylor and 203.0.113.77"},
+                    {"value": "nora-normal-ip", "label": "nora.patel and 198.51.100.31"},
+                    {
+                        "value": "helpdesk-normal-ip",
+                        "label": "helpdesk.admin and 198.51.100.44",
+                    },
+                ],
+                "correct_answer": "sam-mfa-ip",
+                "feedback_correct": (
+                    "Correct. Those values repeat across the MFA denials and later "
+                    "success."
+                ),
+                "feedback_retry": (
+                    "Not yet. Use the values that recur through the denial events."
+                ),
+            },
+            {
+                "question_id": "explain-rule",
+                "flow_id": "rule",
+                "checkpoint_id": "review-rule",
+                "requires_alert": True,
+                "prompt": "Which sequence explains why ENTRA-003 alerts?",
+                "options": [
+                    {
+                        "value": "mfa-sequence",
+                        "label": (
+                            "Two MFA denials followed by a success for the same account "
+                            "and IP."
+                        ),
+                    },
+                    {
+                        "value": "single-denial",
+                        "label": "One isolated MFA denial from any account is enough to alert.",
+                    },
+                    {
+                        "value": "normal-sign-in",
+                        "label": "The expected browser sign-in is the primary alert condition.",
+                    },
+                ],
+                "correct_answer": "mfa-sequence",
+                "feedback_correct": (
+                    "Correct. The local rule needs the repeated denial and later "
+                    "success correlation."
+                ),
+                "feedback_retry": (
+                    "Not yet. Compare the evaluator reason with the repeated account "
+                    "and IP values."
+                ),
+            },
+            {
+                "question_id": "choose-triage",
+                "flow_id": "triage",
+                "checkpoint_id": "complete-tasks",
+                "prompt": "What is the best next analyst action before closing this case?",
+                "options": [
+                    {
+                        "value": "document-mfa-sequence",
+                        "label": (
+                            "Record the repeated MFA denials, later success, account "
+                            "and IP before deciding."
+                        ),
+                    },
+                    {
+                        "value": "dismiss-denials",
+                        "label": "Dismiss the sequence because some other sign-ins were expected.",
+                    },
+                    {
+                        "value": "change-tenant",
+                        "label": "Modify a tenant setting before recording the synthetic evidence.",
+                    },
+                ],
+                "correct_answer": "document-mfa-sequence",
+                "feedback_correct": (
+                    "Correct. Documented evidence comes before a defensible decision "
+                    "in this lab."
+                ),
+                "feedback_retry": (
+                    "Not yet. Preserve the MFA sequence and its entities before making "
+                    "a decision."
+                ),
+            },
+        ],
+        facilitator_notes=(
+            "The alert is justified by two MFA denials and a later successful sign-in for "
+            "sam.taylor from the same source IP. The normal Entra sign-ins add context but "
+            "do not remove the need to investigate that sequence."
+        ),
+    ),
 ]
 
 
@@ -752,6 +1063,7 @@ def training_to_dict(module: TrainingModule) -> dict[str, object]:
         "expected_decisions": module.expected_decisions,
         "assessment": module.assessment,
         "learning_flow": module.learning_flow,
+        "facilitator_notes": module.facilitator_notes,
         "scope_warning": SCOPE_WARNING,
     }
 
@@ -1664,6 +1976,8 @@ def evaluate_case_detection(
 ) -> dict[str, object]:
     if case.primary_detection == "SENT-006":
         return _evaluate_sent_006(events)
+    if case.primary_detection == "ENTRA-003":
+        return _evaluate_entra_003(events)
     return {
         "status": "Observing",
         "reason": "No local evaluator is implemented for this case.",
@@ -2506,7 +2820,7 @@ def _training_instructor_summary(
     ]
     return {
         "mode": "Guided Training",
-        "version": "0.8.0",
+        "version": "0.9.0",
         "score": score,
         "max_score": 10,
         "readiness": readiness,
@@ -3046,9 +3360,7 @@ def _render_workbench_app() -> str:
             <div id="instructor-assessment" class="kv"></div>
             <details class="guide-solution" id="facilitator-notes" hidden>
               <summary>Facilitator notes</summary>
-              <p>The alert is justified by a high-risk Entra sign-in, repeated Windows failures,
-                and a later successful logon for the same account and source IP. The unrelated
-                benign events add context but do not cancel that correlation.</p>
+              <p id="facilitator-note-text"></p>
             </details>
           </div>
           <div id="facilitator-review" class="note-form" hidden>
@@ -3439,6 +3751,7 @@ def _render_workbench_app() -> str:
         `<div>${h(objective)}</div>`
       ).join('');
       $('training-feedback').textContent = payload.feedback;
+      $('facilitator-note-text').textContent = payload.module.facilitator_notes;
       $('training-hint-output').textContent = payload.latest_hint
         ? `Hint: ${payload.latest_hint}`
         : (payload.hints.length ? `Hint: ${payload.hints[payload.hints.length - 1].hint}` : '');
